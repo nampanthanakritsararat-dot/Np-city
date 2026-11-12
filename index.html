@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Street City Online</title>
+<style>
+:root{--bg:#0e1117;--card:#181d27;--line:#2a3140;--acc:#ffb703;--txt:#eef1f6;--mut:#8b95a7}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font-family:system-ui,-apple-system,"Segoe UI","Noto Sans Thai","Sarabun",sans-serif;overflow:hidden}
+[hidden]{display:none!important}
+button{font:inherit;color:inherit;cursor:pointer}
+
+/* ---------- ล็อบบี้ ---------- */
+#lobby{position:fixed;inset:0;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:20px 14px;
+  background:radial-gradient(1200px 600px at 20% -10%,#26324a 0,transparent 60%),radial-gradient(900px 500px at 100% 110%,#3a2a1c 0,transparent 60%),var(--bg)}
+.card{width:100%;max-width:560px;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:22px;box-shadow:0 20px 60px #0008}
+h1{margin:0;font-size:28px;letter-spacing:1px}
+h1 span{color:var(--acc)}
+.sub{margin:4px 0 14px;color:var(--mut);font-size:14px}
+.status{display:flex;align-items:center;gap:8px;padding:10px 12px;background:#10141c;border:1px solid var(--line);border-radius:12px;font-size:14px}
+.dot{width:10px;height:10px;border-radius:50%;background:#e63946;flex:none}
+.dot.on{background:#2ecc71;box-shadow:0 0 10px #2ecc71}
+.dot.full{background:#f4a261}
+.who{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px}
+.who span{font-size:12px;background:#222a38;border-radius:99px;padding:3px 9px;color:#c8d0de}
+label{display:block;margin:16px 0 6px;font-size:13px;color:var(--mut);font-weight:600}
+input#nameIn{width:100%;padding:13px 14px;font-size:17px;border-radius:12px;border:1px solid var(--line);background:#10141c;color:var(--txt);outline:none}
+input#nameIn:focus{border-color:var(--acc)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px}
+.cc{text-align:left;padding:10px 12px;border-radius:12px;border:2px solid var(--line);background:#10141c}
+.cc b{display:block;font-size:15px}
+.cc small{color:var(--mut);font-size:12px;line-height:1.35;display:block;margin-top:2px}
+.cc.sel{border-color:var(--acc);background:#2a2314}
+.seg{display:flex;gap:8px}
+.seg button{flex:1;padding:12px;border-radius:12px;border:2px solid var(--line);background:#10141c;font-weight:600}
+.seg button.sel{border-color:var(--acc);background:#2a2314}
+.help{margin-top:10px;font-size:13px;color:#b7c0d0;background:#10141c;border-radius:12px;padding:10px 12px;line-height:1.6}
+.help kbd{background:#2a3140;border-radius:5px;padding:1px 6px;font-family:inherit;font-size:12px}
+.err{color:#ff6b6b;font-size:14px;min-height:20px;margin-top:10px}
+.join{width:100%;margin-top:6px;padding:15px;font-size:18px;font-weight:800;border:0;border-radius:14px;background:linear-gradient(180deg,#ffc933,#ffa000);color:#1b1200}
+.join:disabled{opacity:.5;cursor:not-allowed}
+
+/* ---------- เกม ---------- */
+#game{position:fixed;inset:0;touch-action:none;user-select:none;-webkit-user-select:none}
+#cv{position:absolute;inset:0;width:100%;height:100%;display:block}
+.panel{background:#0b0e14b3;border:1px solid #ffffff22;border-radius:12px;padding:8px 10px;backdrop-filter:blur(4px)}
+#hudMe{position:absolute;left:max(10px,env(safe-area-inset-left));top:max(10px,env(safe-area-inset-top));min-width:170px;pointer-events:none}
+#hudName{font-weight:700;font-size:14px;margin-bottom:5px}
+.bar{position:relative;height:16px;border-radius:8px;background:#000a;overflow:hidden}
+.bar i{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(180deg,#59e08a,#1fae55);width:100%;transition:width .15s}
+.bar span{position:absolute;inset:0;text-align:center;font-size:11px;line-height:16px;font-weight:700;text-shadow:0 1px 2px #000}
+#money{font-size:20px;font-weight:800;color:#7dff9b;margin-top:5px}
+#wanted{margin-top:3px;color:#ff6b6b;font-weight:700;font-size:13px;animation:bl 1s infinite}
+@keyframes bl{50%{opacity:.4}}
+#hudRight{position:absolute;right:max(10px,env(safe-area-inset-right));top:max(10px,env(safe-area-inset-top));text-align:right;pointer-events:none}
+#online{font-size:13px;font-weight:700;margin-bottom:4px;text-shadow:0 1px 3px #000}
+#mini{width:110px;height:110px;border-radius:12px;border:1px solid #ffffff33;background:#0b0e14cc;display:block;margin-left:auto}
+#ping{font-size:11px;color:#c8d0de;margin-top:3px;text-shadow:0 1px 3px #000}
+#feed{position:absolute;left:50%;top:max(10px,env(safe-area-inset-top));transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:4px;pointer-events:none;width:min(60vw,420px)}
+#feed div{background:#0b0e14c8;border-radius:99px;padding:4px 12px;font-size:13px;text-align:center;animation:fi .2s}
+@keyframes fi{from{opacity:0;transform:translateY(-6px)}}
+#hint{position:absolute;left:50%;bottom:24%;transform:translateX(-50%);background:#000b;border:1px solid var(--acc);color:var(--acc);padding:8px 16px;border-radius:99px;font-weight:700;font-size:15px;pointer-events:none;white-space:nowrap}
+#chatlog{position:absolute;left:max(10px,env(safe-area-inset-left));bottom:max(60px,calc(env(safe-area-inset-bottom) + 60px));max-width:min(70vw,380px);font-size:13px;line-height:1.4;pointer-events:none;text-shadow:0 1px 3px #000,0 0 6px #000}
+#chatlog div{animation:fi .2s}
+#chatlog b{color:var(--acc)}
+#chatin{position:absolute;left:max(10px,env(safe-area-inset-left));bottom:max(12px,env(safe-area-inset-bottom));width:min(70vw,380px);padding:10px 12px;font-size:16px;border-radius:10px;border:1px solid var(--acc);background:#000d;color:#fff;outline:none;z-index:6}
+.ov{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:#000a;z-index:9;text-align:center;padding:20px}
+.ov h2{margin:0;font-size:28px}
+.ov button,#jobmenu button{padding:11px 18px;border-radius:12px;border:2px solid var(--line);background:#1b212d;font-weight:700}
+#dead{background:#4a0000aa;pointer-events:none}
+#jobmenu{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:8;background:#12161ff2;border:1px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:8px;min-width:260px;max-width:92vw}
+#jobmenu h3{margin:0 0 4px;font-size:17px}
+#jobmenu button{text-align:left}
+#jobmenu button.cur{border-color:var(--acc)}
+#jobmenu button small{display:block;color:var(--mut);font-weight:400;font-size:12px}
+
+/* ---------- ปุ่มมือถือ ---------- */
+#touch{position:absolute;inset:0;pointer-events:none;z-index:5}
+#stick{position:absolute;left:max(24px,env(safe-area-inset-left));bottom:max(28px,env(safe-area-inset-bottom));width:140px;height:140px;border-radius:50%;background:#ffffff14;border:2px solid #ffffff33;pointer-events:auto;touch-action:none}
+#knob{position:absolute;left:50%;top:50%;width:62px;height:62px;margin:-31px 0 0 -31px;border-radius:50%;background:#ffffff55;border:2px solid #ffffff88}
+#btns{position:absolute;right:max(18px,env(safe-area-inset-right));bottom:max(24px,env(safe-area-inset-bottom));width:190px;height:190px;pointer-events:none}
+#btns button{position:absolute;border-radius:50%;border:2px solid #ffffff55;background:#ffffff22;font-size:28px;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px)}
+#bPunch{right:0;bottom:0;width:92px;height:92px;font-size:40px!important;background:#ff4d4d55!important}
+#bCar{right:104px;bottom:6px;width:64px;height:64px}
+#bAct{right:8px;bottom:106px;width:64px;height:64px}
+#bChat{right:92px;bottom:102px;width:48px;height:48px;font-size:22px!important}
+</style>
+</head>
+<body>
+
+<!-- ===================== ล็อบบี้ ===================== -->
+<div id="lobby">
+  <div class="card">
+    <h1>🏙️ STREET <span>CITY</span> ONLINE</h1>
+    <p class="sub">เมืองออนไลน์ เล่นพร้อมกันสูงสุด 50 คน — ต่อย ขับรถ ทำอาชีพ หาเงิน</p>
+    <div class="status"><i id="dot" class="dot"></i><b id="stText">กำลังเช็กเซิร์ฟเวอร์…</b></div>
+    <div id="who" class="who"></div>
+
+    <label>ชื่อตัวละคร</label>
+    <input id="nameIn" maxlength="14" placeholder="ตั้งชื่อตัวละคร (2–14 ตัวอักษร)" autocomplete="off">
+
+    <label>เลือกอาชีพ (เปลี่ยนได้ในเกมที่ 💼 ศูนย์อาชีพ)</label>
+    <div id="careers" class="grid"></div>
+
+    <label>เล่นบน</label>
+    <div id="plat" class="seg">
+      <button data-v="pc">💻 คอมพิวเตอร์</button>
+      <button data-v="mobile">📱 มือถือ</button>
+    </div>
+    <div id="help" class="help"></div>
+
+    <div id="err" class="err"></div>
+    <button id="joinBtn" class="join">เข้าเซิร์ฟเวอร์ ▶</button>
+  </div>
+</div>
+
+<!-- ===================== เกม ===================== -->
+<div id="game" hidden>
+  <canvas id="cv"></canvas>
+
+  <div id="hudMe" class="panel">
+    <div id="hudName"></div>
+    <div class="bar"><i id="hpFill"></i><span id="hpTxt"></span></div>
+    <div id="money">$0</div>
+    <div id="wanted" hidden>🚨 มีค่าหัว!</div>
+  </div>
+  <div id="hudRight">
+    <div id="online"></div>
+    <canvas id="mini" width="220" height="220"></canvas>
+    <div id="ping"></div>
+  </div>
+  <div id="feed"></div>
+  <div id="hint" hidden></div>
+  <div id="chatlog"></div>
+  <input id="chatin" maxlength="100" hidden placeholder="พิมพ์ข้อความ แล้วกด Enter ส่ง" autocomplete="off">
+
+  <div id="touch" hidden>
+    <div id="stick"><div id="knob"></div></div>
+    <div id="btns">
+      <button id="bPunch">👊</button>
+      <button id="bCar">🚗</button>
+      <button id="bAct">🛒</button>
+      <button id="bChat">💬</button>
+    </div>
+  </div>
+
+  <div id="jobmenu" hidden></div>
+  <div id="dead" class="ov" hidden><h2>💀 คุณถูกน็อค</h2><div>กำลังเกิดใหม่…</div></div>
+  <div id="dc" class="ov" hidden><h2>📡 หลุดการเชื่อมต่อ</h2><div>เซิร์ฟเวอร์ปิดหรือเน็ตมีปัญหา</div><button onclick="location.reload()">กลับล็อบบี้</button></div>
+</div>
+
+<script>
+(() => {
+'use strict';
+const $ = s => document.querySelector(s);
+const store = {
+  get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} },
+};
+
+const CAREERS = {
+  worker: { i: '💼', n: 'พนักงานออฟฟิศ', c: '#4da3ff', d: 'เงินเดือน $12 ทุก 10 วินาที' },
+  taxi:   { i: '🚕', n: 'แท็กซี่',        c: '#ffd23f', d: 'ขับรถหาเงิน ได้ค่าโดยสารตามระยะทาง' },
+  police: { i: '👮', n: 'ตำรวจ',          c: '#3b5bdb', d: 'เลือด 130 ลดดาเมจ 25% จับคนมีค่าหัวได้ $200' },
+  thief:  { i: '🦹', n: 'โจร',            c: '#9b59b6', d: 'ต่อยแล้วขโมยเงินเหยื่อ 12% (เลือดน้อยกว่า)' },
+  doctor: { i: '🩺', n: 'หมอ',            c: '#2ecc71', d: 'ฟื้นเลือดตัวเอง รักษาคนใกล้ๆ ได้เงิน' },
+};
+const CAR_COLORS = ['#e63946', '#f4a261', '#2a9d8f', '#457b9d', '#9b5de5', '#f1fa8c', '#f2f2f2', '#ff6b9d'];
+const BLD = ['#59636f', '#6b5b73', '#4f6f7a', '#7a6a55', '#5b6e5a', '#73585c'];
+const KINDS = ['bld', 'park', 'shop', 'job'];
+
+/* ============================== ล็อบบี้ ============================== */
+let career = CAREERS[store.get('sc_career')] ? store.get('sc_career') : 'worker';
+const auto = (window.matchMedia && matchMedia('(pointer:coarse)').matches) || 'ontouchstart' in window ? 'mobile' : 'pc';
+let platform = store.get('sc_plat') || auto;
+$('#nameIn').value = store.get('sc_name') || '';
+
+const cg = $('#careers');
+for (const [k, c] of Object.entries(CAREERS)) {
+  const b = document.createElement('button');
+  b.className = 'cc'; b.dataset.k = k;
+  b.innerHTML = `<b>${c.i} ${c.n}</b><small>${c.d}</small>`;
+  b.onclick = () => { career = k; renderLobby(); };
+  cg.appendChild(b);
+}
+document.querySelectorAll('#plat button').forEach(b => b.onclick = () => { platform = b.dataset.v; renderLobby(); });
+function renderLobby() {
+  cg.querySelectorAll('.cc').forEach(b => b.classList.toggle('sel', b.dataset.k === career));
+  document.querySelectorAll('#plat button').forEach(b => b.classList.toggle('sel', b.dataset.v === platform));
+  $('#help').innerHTML = platform === 'pc'
+    ? '<b>คอม:</b> <kbd>W A S D</kbd> เดิน/ขับ · เมาส์ เล็งทิศ · <kbd>Space</kbd> หรือคลิก = ต่อย<br><kbd>E</kbd> ขึ้น/ลงรถ · <kbd>F</kbd> ใช้งานร้านค้า/ศูนย์อาชีพ · <kbd>Enter</kbd> แชท'
+    : '<b>มือถือ:</b> จอยซ้าย เดิน/ขับ (ในรถ: ขึ้น=เร่ง ซ้ายขวา=เลี้ยว)<br>👊 ต่อย · 🚗 ขึ้น/ลงรถ · 🛒 ใช้งานร้าน/ศูนย์อาชีพ · 💬 แชท';
+}
+renderLobby();
+
+let lobbyErr = '';
+async function poll() {
+  try {
+    const r = await fetch('/status', { cache: 'no-store' });
+    const s = await r.json();
+    const full = s.n >= s.max;
+    $('#dot').className = 'dot ' + (full ? 'full' : 'on');
+    $('#stText').textContent = full ? `เซิร์ฟเวอร์เต็ม ${s.n}/${s.max} คน` : `ออนไลน์ ${s.n}/${s.max} คน — เข้าได้เลย`;
+    const w = $('#who'); w.textContent = '';
+    s.names.slice(0, 20).forEach(n => { const e = document.createElement('span'); e.textContent = n; w.appendChild(e); });
+    if (s.n > 20) { const e = document.createElement('span'); e.textContent = `+${s.n - 20}`; w.appendChild(e); }
+  } catch (e) {
+    $('#dot').className = 'dot';
+    $('#stText').textContent = 'เซิร์ฟเวอร์ออฟไลน์ (ต้องเปิดผ่าน node server.js)';
+  }
+}
+poll(); setInterval(() => { if (!joined) poll(); }, 3000);
+
+$('#joinBtn').onclick = () => {
+  const name = $('#nameIn').value.trim();
+  if (Array.from(name).length < 2) { $('#err').textContent = 'ใส่ชื่อตัวละครอย่างน้อย 2 ตัวอักษร'; return; }
+  $('#err').textContent = '';
+  store.set('sc_name', name); store.set('sc_career', career); store.set('sc_plat', platform);
+  $('#joinBtn').disabled = true;
+  connect(name);
+};
+$('#nameIn').addEventListener('keydown', e => { if (e.key === 'Enter') $('#joinBtn').click(); });
+
+/* ============================== เครือข่าย ============================== */
+let ws = null, joined = false, W = 3200, CELL = 400, blocks = [], medkit = 60;
+const me = { id: 0, hp: 100, mhp: 100, money: 0, career: 'worker', wanted: false, dead: false };
+const players = new Map(), names = new Map(), cars = [];
+let pingMs = 0;
+
+function connect(name) {
+  lobbyErr = '';
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  try { ws = new WebSocket(`${proto}://${location.host}/ws`); } catch (e) { $('#err').textContent = 'เชื่อมต่อไม่ได้'; $('#joinBtn').disabled = false; return; }
+  ws.onopen = () => ws.send(JSON.stringify({ t: 'join', name, career, platform, token: store.get('sc_token') || '' }));
+  ws.onmessage = e => { let m; try { m = JSON.parse(e.data); } catch (_) { return; } handle(m); };
+  ws.onclose = () => {
+    if (!joined) { $('#err').textContent = lobbyErr || 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้'; $('#joinBtn').disabled = false; poll(); }
+    else $('#dc').hidden = false;
+  };
+}
+const send = o => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
+
+function handle(m) {
+  switch (m.t) {
+    case 'err': lobbyErr = m.m; break;
+    case 'welcome': {
+      joined = true; me.id = m.id; store.set('sc_token', m.token);
+      W = m.W; CELL = W / 8; medkit = m.medkit;
+      blocks = m.blocks.map(a => ({ x: a[0], y: a[1], w: a[2], h: a[3], k: KINDS[a[4]], c: a[5], z: a[6] }));
+      camX = m.you.x; camY = m.you.y;
+      $('#lobby').hidden = true; $('#game').hidden = false;
+      $('#touch').hidden = platform !== 'mobile';
+      resize(); startLoops();
+      break;
+    }
+    case 'roster': {
+      names.clear();
+      for (const [id, n, c, p] of m.list) names.set(id, { n, c, p });
+      $('#online').textContent = `👥 ${m.list.length}/50`;
+      break;
+    }
+    case 's': onSnap(m); break;
+    case 'me': Object.assign(me, m); updateHud(); break;
+    case 'feed': addFeed(m.m); break;
+    case 'toast': addFeed(m.m); break;
+    case 'chat': addChat(m.n, m.m); break;
+    case 'pong': pingMs = Math.round(performance.now() - m.ts); $('#ping').textContent = `ping ${pingMs} ms`; break;
+  }
+}
+function onSnap(m) {
+  const ids = new Set();
+  for (const a of m.p) {
+    const id = a[0]; ids.add(id);
+    let e = players.get(id);
+    if (!e) { e = { id, rx: a[1], ry: a[2], rang: a[3] / 100 }; players.set(id, e); }
+    e.x = a[1]; e.y = a[2]; e.ang = a[3] / 100; e.hp = a[4]; e.car = a[5]; e.fl = a[6];
+  }
+  for (const id of [...players.keys()]) if (!ids.has(id)) players.delete(id);
+  for (const a of m.c) {
+    let c = cars[a[0] - 1];
+    if (!c) { c = { id: a[0], rx: a[1], ry: a[2], rang: a[3] / 100 }; cars[a[0] - 1] = c; }
+    c.x = a[1]; c.y = a[2]; c.ang = a[3] / 100; c.driver = a[4]; c.color = a[5];
+  }
+}
+
+/* ============================== HUD / แชท ============================== */
+function updateHud() {
+  const c = CAREERS[me.career] || CAREERS.worker;
+  $('#hudName').textContent = `${c.i} ${(names.get(me.id) || {}).n || ''} · ${c.n}`;
+  const pct = Math.max(0, Math.min(100, me.hp / me.mhp * 100));
+  $('#hpFill').style.width = pct + '%';
+  $('#hpFill').style.background = pct < 30 ? 'linear-gradient(180deg,#ff7b7b,#d62828)' : '';
+  $('#hpTxt').textContent = `${me.hp}/${me.mhp}`;
+  $('#money').textContent = '$' + me.money.toLocaleString();
+  $('#wanted').hidden = !me.wanted;
+  $('#dead').hidden = !me.dead;
+}
+function addFeed(t) {
+  const f = $('#feed'), d = document.createElement('div');
+  d.textContent = t; f.appendChild(d);
+  while (f.children.length > 5) f.firstChild.remove();
+  setTimeout(() => d.remove(), 6000);
+}
+function addChat(n, t) {
+  const l = $('#chatlog'), d = document.createElement('div');
+  const b = document.createElement('b'); b.textContent = n + ': ';
+  d.appendChild(b); d.appendChild(document.createTextNode(t));
+  l.appendChild(d);
+  while (l.children.length > 7) l.firstChild.remove();
+  setTimeout(() => d.remove(), 15000);
+}
+const chatIn = $('#chatin');
+let typing = false;
+function openChat() { typing = true; chatIn.hidden = false; chatIn.value = ''; chatIn.focus(); }
+function closeChat() { typing = false; chatIn.hidden = true; chatIn.blur(); }
+chatIn.addEventListener('keydown', e => {
+  e.stopPropagation();
+  if (e.key === 'Enter') { const v = chatIn.value.trim(); if (v) send({ t: 'chat', m: v }); closeChat(); }
+  else if (e.key === 'Escape') closeChat();
+});
+
+/* ============================== อินพุต ============================== */
+const keys = {};
+const mouse = { x: 0, y: 0, moved: false, down: false };
+const stick = { active: false, x: 0, y: 0, id: -1 };
+let lastAng = 0, punchHeld = false, lastPunchSent = 0;
+
+addEventListener('keydown', e => {
+  if (!joined || typing) return;
+  if (!$('#jobmenu').hidden && e.code === 'Escape') { $('#jobmenu').hidden = true; return; }
+  if (e.code === 'Enter') { e.preventDefault(); openChat(); return; }
+  if (e.repeat) { if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault(); return; }
+  keys[e.code] = true;
+  if (e.code === 'Space') { e.preventDefault(); punchHeld = true; }
+  if (e.code === 'KeyE') send({ t: 'e' });
+  if (e.code === 'KeyF') act();
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
+});
+addEventListener('keyup', e => { keys[e.code] = false; if (e.code === 'Space') punchHeld = false; });
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; punchHeld = false; });
+const cv = $('#cv');
+cv.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; mouse.moved = true; });
+cv.addEventListener('mousedown', e => { if (platform === 'pc' && e.button === 0) { punchHeld = true; mouse.x = e.clientX; mouse.y = e.clientY; mouse.moved = true; } });
+addEventListener('mouseup', () => { if (platform === 'pc') punchHeld = keys.Space || false; });
+cv.addEventListener('contextmenu', e => e.preventDefault());
+
+// จอยสติ๊ก
+const stickEl = $('#stick'), knob = $('#knob');
+function stickMove(e) {
+  const r = stickEl.getBoundingClientRect();
+  let dx = (e.clientX - (r.left + r.width / 2)) / 55, dy = (e.clientY - (r.top + r.height / 2)) / 55;
+  const l = Math.hypot(dx, dy); if (l > 1) { dx /= l; dy /= l; }
+  stick.x = dx; stick.y = dy;
+  knob.style.transform = `translate(${dx * 55}px,${dy * 55}px)`;
+}
+stickEl.addEventListener('pointerdown', e => { stick.active = true; stick.id = e.pointerId; stickEl.setPointerCapture(e.pointerId); stickMove(e); e.preventDefault(); });
+stickEl.addEventListener('pointermove', e => { if (stick.active && e.pointerId === stick.id) stickMove(e); });
+const stickEnd = e => { if (e.pointerId !== stick.id) return; stick.active = false; stick.x = stick.y = 0; knob.style.transform = ''; };
+stickEl.addEventListener('pointerup', stickEnd); stickEl.addEventListener('pointercancel', stickEnd);
+
+const hold = (el, on, off) => {
+  el.addEventListener('pointerdown', e => { e.preventDefault(); el.setPointerCapture(e.pointerId); on(); });
+  const end = () => off && off();
+  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+};
+hold($('#bPunch'), () => { punchHeld = true; }, () => { punchHeld = false; });
+hold($('#bCar'), () => send({ t: 'e' }));
+hold($('#bAct'), () => act());
+hold($('#bChat'), () => openChat());
+
+function myP() { return players.get(me.id); }
+function nearKind(kind, range) {
+  const p = myP(); if (!p) return false;
+  for (const b of blocks) {
+    if (b.k !== kind) continue;
+    const dx = Math.max(b.x - p.x, 0, p.x - (b.x + b.w)), dy = Math.max(b.y - p.y, 0, p.y - (b.y + b.h));
+    if (Math.hypot(dx, dy) < range) return true;
+  }
+  return false;
+}
+function act() {
+  const p = myP(); if (!p || p.car || me.dead) return;
+  if (nearKind('job', 60)) openJobMenu();
+  else if (nearKind('shop', 60)) send({ t: 'buy' });
+}
+function openJobMenu() {
+  const m = $('#jobmenu'); m.textContent = '';
+  const h = document.createElement('h3'); h.textContent = '💼 ศูนย์อาชีพ — เลือกอาชีพ'; m.appendChild(h);
+  for (const [k, c] of Object.entries(CAREERS)) {
+    const b = document.createElement('button');
+    if (k === me.career) b.className = 'cur';
+    b.innerHTML = `${c.i} ${c.n}<small>${c.d}</small>`;
+    b.onclick = () => { send({ t: 'job', career: k }); m.hidden = true; };
+    m.appendChild(b);
+  }
+  const x = document.createElement('button'); x.textContent = 'ปิด'; x.onclick = () => { m.hidden = true; }; m.appendChild(x);
+  m.hidden = false;
+}
+
+function inputState() {
+  const p = myP(), inCar = !!(p && p.car);
+  let mx = 0, my = 0, th = 0, st = 0, ang = lastAng;
+  const kx = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
+  const ky = (keys.KeyS || keys.ArrowDown ? 1 : 0) - (keys.KeyW || keys.ArrowUp ? 1 : 0);
+  if (stick.active) {
+    if (inCar) { st = stick.x; th = -stick.y; }
+    else { mx = stick.x; my = stick.y; if (Math.hypot(mx, my) > 0.25) ang = Math.atan2(my, mx); }
+  } else if (inCar) { st = kx; th = -ky; }
+  else {
+    mx = kx; my = ky;
+    if (platform === 'pc' && mouse.moved) ang = Math.atan2(mouse.y - innerHeight / 2, mouse.x - innerWidth / 2);
+    else if (kx || ky) ang = Math.atan2(ky, kx);
+  }
+  if (!inCar) lastAng = ang;
+  return { t: 'in', mx: +mx.toFixed(2), my: +my.toFixed(2), th: +th.toFixed(2), st: +st.toFixed(2), ang: +ang.toFixed(2) };
+}
+
+let lastSent = '', lastSentAt = 0;
+function startLoops() {
+  setInterval(() => {
+    if (typing) { /* พิมพ์แชทอยู่: หยุดเดิน */ }
+    const s = typing ? { t: 'in', mx: 0, my: 0, th: 0, st: 0 } : inputState();
+    const j = JSON.stringify(s), now = performance.now();
+    if (j !== lastSent || now - lastSentAt > 500) { send(s); lastSent = j; lastSentAt = now; }
+    if (punchHeld && !me.dead && now - lastPunchSent > 230) { send({ t: 'p' }); lastPunchSent = now; }
+  }, 50);
+  setInterval(() => send({ t: 'ping', ts: performance.now() }), 3000);
+  setInterval(updateHint, 200);
+  requestAnimationFrame(frame);
+}
+function updateHint() {
+  const h = $('#hint'), p = myP();
+  if (!p || me.dead) { h.hidden = true; return; }
+  const pc = platform === 'pc';
+  let t = '';
+  if (p.car) t = pc ? 'กด E ลงรถ' : 'กด 🚗 ลงรถ';
+  else if (nearKind('job', 60)) t = pc ? 'กด F เลือกอาชีพ' : 'กด 🛒 เลือกอาชีพ';
+  else if (nearKind('shop', 60)) t = (pc ? 'กด F' : 'กด 🛒') + ` ซื้อชุดปฐมพยาบาล $${medkit}`;
+  else {
+    for (const c of cars) if (c && !c.driver && Math.hypot(c.x - p.x, c.y - p.y) < 80) { t = pc ? 'กด E ขึ้นรถ' : 'กด 🚗 ขึ้นรถ'; break; }
+  }
+  h.hidden = !t; h.textContent = t;
+}
+
+/* ============================== วาดภาพ ============================== */
+const ctx = cv.getContext('2d'), mctx = $('#mini').getContext('2d');
+let dpr = 1, camX = 0, camY = 0, zoom = 1, lastT = 0;
+function resize() {
+  dpr = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = Math.round(innerWidth * dpr); cv.height = Math.round(innerHeight * dpr);
+}
+addEventListener('resize', () => { if (joined) resize(); });
+
+const lerpAng = (a, b, t) => { let d = b - a; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return a + d * t; };
+function rr(x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+function hash(n) { n = Math.sin(n * 127.1) * 43758.5453; return n - Math.floor(n); }
+
+function frame(t) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.05, (t - lastT) / 1000 || 0.016); lastT = t;
+  const k = Math.min(1, dt * 14);
+  const step = e => {
+    if (Math.abs(e.x - e.rx) > 300 || Math.abs(e.y - e.ry) > 300) { e.rx = e.x; e.ry = e.y; e.rang = e.ang; }
+    else { e.rx += (e.x - e.rx) * k; e.ry += (e.y - e.ry) * k; e.rang = lerpAng(e.rang, e.ang, k); }
+  };
+  players.forEach(step); cars.forEach(c => c && step(c));
+  const mp = myP(); if (!mp) return;
+
+  const vw = innerWidth, vh = innerHeight;
+  const base = Math.max(0.55, Math.min(1.3, Math.min(vw, vh) / 620));
+  const zt = base * (mp.car ? 0.8 : 1);
+  zoom += (zt - zoom) * Math.min(1, dt * 3);
+  camX = mp.rx; camY = mp.ry;
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = '#14171c'; ctx.fillRect(0, 0, cv.width, cv.height);
+  const s = dpr * zoom;
+  ctx.setTransform(s, 0, 0, s, cv.width / 2 - camX * s, cv.height / 2 - camY * s);
+  const hw = vw / 2 / zoom + 80, hh = vh / 2 / zoom + 80;
+  const x0 = camX - hw, x1 = camX + hw, y0 = camY - hh, y1 = camY + hh;
+
+  // ถนน
+  ctx.fillStyle = '#343a43'; ctx.fillRect(0, 0, W, W);
+  ctx.strokeStyle = '#d4b83c'; ctx.lineWidth = 4; ctx.setLineDash([32, 26]);
+  for (let i = 1; i < 8; i++) {
+    const v = i * CELL;
+    if (v > x0 && v < x1) { ctx.beginPath(); ctx.moveTo(v, Math.max(0, y0)); ctx.lineTo(v, Math.min(W, y1)); ctx.stroke(); }
+    if (v > y0 && v < y1) { ctx.beginPath(); ctx.moveTo(Math.max(0, x0), v); ctx.lineTo(Math.min(W, x1), v); ctx.stroke(); }
+  }
+  ctx.setLineDash([]);
+
+  // ตึก / สวน / ร้าน
+  blocks.forEach((b, bi) => {
+    if (b.x > x1 || b.x + b.w < x0 || b.y > y1 || b.y + b.h < y0) return;
+    if (b.k === 'park') {
+      ctx.fillStyle = '#2d7a47'; rr(b.x, b.y, b.w, b.h, 18); ctx.fill();
+      ctx.fillStyle = '#3a9a5a';
+      for (let n = 0; n < 7; n++) {
+        const tx = b.x + 30 + hash(bi * 9 + n) * (b.w - 60), ty = b.y + 30 + hash(bi * 13 + n + 5) * (b.h - 60);
+        ctx.beginPath(); ctx.arc(tx, ty, 16 + hash(n + bi) * 10, 0, 7); ctx.fill();
+      }
+      return;
+    }
+    ctx.fillStyle = '#7f8791'; rr(b.x - 8, b.y - 8, b.w + 16, b.h + 16, 10); ctx.fill();
+    ctx.fillStyle = '#00000044'; rr(b.x + 6, b.y + 8, b.w, b.h, 8); ctx.fill();
+    ctx.fillStyle = b.k === 'shop' ? '#d9822b' : b.k === 'job' ? '#17977f' : BLD[b.c];
+    rr(b.x, b.y, b.w, b.h, 8); ctx.fill();
+    ctx.fillStyle = '#ffffff1c'; rr(b.x + 14, b.y + 14, b.w - 28, b.h - 28, 6); ctx.fill();
+    if (b.k === 'bld') {
+      ctx.fillStyle = '#00000030';
+      for (let n = 0; n < 4; n++) ctx.fillRect(b.x + 30 + n * 55, b.y + 30, 34, 22);
+      ctx.fillRect(b.x + 30, b.y + b.h - 70, 80, 40);
+    } else {
+      ctx.fillStyle = '#fff'; ctx.font = '800 30px system-ui,"Noto Sans Thai",sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(b.k === 'shop' ? '🛒 ร้านค้า' : '💼 ศูนย์อาชีพ', b.x + b.w / 2, b.y + b.h / 2);
+      ctx.fillStyle = '#ffe066'; ctx.fillRect(b.x + b.w / 2 - 30, b.y + b.h - 6, 60, 10);
+    }
+  });
+
+  // รถ
+  for (const c of cars) {
+    if (!c || c.rx < x0 - 60 || c.rx > x1 + 60 || c.ry < y0 - 60 || c.ry > y1 + 60) continue;
+    ctx.save(); ctx.translate(c.rx, c.ry); ctx.rotate(c.rang);
+    ctx.fillStyle = '#0006'; rr(-24, -12, 52, 30, 7); ctx.fill();
+    ctx.fillStyle = CAR_COLORS[c.color % 8]; rr(-26, -14, 52, 28, 7); ctx.fill();
+    ctx.strokeStyle = '#0008'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = '#16202c'; rr(2, -11, 13, 22, 3); ctx.fill(); rr(-19, -10, 9, 20, 3); ctx.fill();
+    ctx.fillStyle = '#fff3a0'; ctx.fillRect(24, -11, 3, 6); ctx.fillRect(24, 5, 3, 6);
+    ctx.fillStyle = '#e63946'; ctx.fillRect(-27, -11, 3, 6); ctx.fillRect(-27, 5, 3, 6);
+    ctx.restore();
+  }
+
+  // ผู้เล่น
+  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  const list = [...players.values()].sort((a, b) => a.ry - b.ry);
+  for (const e of list) {
+    if (e.rx < x0 || e.rx > x1 || e.ry < y0 || e.ry > y1) continue;
+    const info = names.get(e.id) || { n: '…', c: 'worker' };
+    const cr = CAREERS[info.c] || CAREERS.worker;
+    const dead = e.hp <= 0;
+    let ny = e.ry - 28;
+    if (!e.car) {
+      ctx.save(); ctx.translate(e.rx, e.ry);
+      if (dead) { ctx.globalAlpha = 0.55; ctx.font = '26px sans-serif'; ctx.fillText('💀', 0, 8); ctx.restore(); }
+      else {
+        if (e.fl & 2) { ctx.strokeStyle = (Math.floor(t / 200) % 2) ? '#ff3b3b' : '#3b8bff'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(0, 0, 23, 0, 7); ctx.stroke(); }
+        if (e.fl & 8) { ctx.strokeStyle = '#ffffff88'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(0, 0, 20, 0, 7); ctx.stroke(); }
+        ctx.fillStyle = '#0005'; ctx.beginPath(); ctx.ellipse(2, 4, 15, 12, 0, 0, 7); ctx.fill();
+        ctx.rotate(e.rang);
+        const skin = '#f0c9a0', pun = e.fl & 1;
+        ctx.fillStyle = skin; ctx.strokeStyle = '#000a'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(14, -9, 5.5, 0, 7); ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.arc(pun ? 36 : 14, 9, 6, 0, 7); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = (e.fl & 4) ? '#ff5555' : cr.c;
+        ctx.beginPath(); ctx.arc(0, 0, 14, 0, 7); ctx.fill(); ctx.lineWidth = 2; ctx.stroke();
+        ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(2, 0, 7, 0, 7); ctx.fill();
+        ctx.restore();
+      }
+    } else ny = e.ry - 34;
+    if (dead) ny = e.ry - 22;
+    // ชื่อ + เลือด
+    if (e.id !== me.id && !dead) {
+      const w = 38, pct = Math.max(0, Math.min(1, e.hp / (info.c === 'police' ? 130 : info.c === 'thief' ? 90 : 100)));
+      ctx.fillStyle = '#000a'; ctx.fillRect(e.rx - w / 2, ny - 4, w, 5);
+      ctx.fillStyle = pct < 0.3 ? '#ff5050' : '#4be07f'; ctx.fillRect(e.rx - w / 2, ny - 4, w * pct, 5);
+    }
+    ctx.font = '700 13px system-ui,"Noto Sans Thai",sans-serif'; ctx.lineWidth = 3; ctx.strokeStyle = '#000c';
+    const label = `${cr.i} ${info.n}${info.p === 'mobile' ? ' 📱' : ''}`;
+    ctx.strokeText(label, e.rx, ny - 8); ctx.fillStyle = e.id === me.id ? '#ffd166' : '#fff'; ctx.fillText(label, e.rx, ny - 8);
+  }
+  drawMini(mp);
+}
+
+function drawMini(mp) {
+  const S = 220, k = S / W;
+  mctx.clearRect(0, 0, S, S);
+  mctx.fillStyle = '#2b3038'; mctx.fillRect(0, 0, S, S);
+  for (const b of blocks) {
+    mctx.fillStyle = b.k === 'park' ? '#2d7a47' : b.k === 'shop' ? '#ff9f43' : b.k === 'job' ? '#1dd3b0' : '#5b6572';
+    mctx.fillRect(b.x * k, b.y * k, b.w * k, b.h * k);
+  }
+  mctx.fillStyle = '#ddd';
+  for (const c of cars) if (c) mctx.fillRect(c.x * k - 2, c.y * k - 2, 4, 4);
+  for (const e of players.values()) {
+    if (e.id === me.id) continue;
+    const cr = CAREERS[(names.get(e.id) || {}).c] || CAREERS.worker;
+    mctx.fillStyle = cr.c; mctx.beginPath(); mctx.arc(e.x * k, e.y * k, 3.5, 0, 7); mctx.fill();
+  }
+  mctx.fillStyle = '#fff'; mctx.strokeStyle = '#000'; mctx.lineWidth = 2;
+  mctx.beginPath(); mctx.arc(mp.x * k, mp.y * k, 5.5, 0, 7); mctx.fill(); mctx.stroke();
+}
+})();
+</script>
+</body>
+</html>
