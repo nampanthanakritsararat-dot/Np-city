@@ -1,10 +1,10 @@
 'use strict';
 /*
- * STREET CITY ONLINE v2 — dedicated game server
+ * Np city RP (STREET CITY ONLINE v3) — dedicated game server
  * - ไม่ต้องติดตั้งแพ็กเกจเพิ่ม (ใช้ Node.js 18+ อย่างเดียว)
  * - HTTP + WebSocket (เขียน handshake/frame เอง) ที่พอร์ตเดียวกัน
  * - ห้องเดียวทั้งเซิร์ฟเวอร์ จำกัด 50 คน
- * - แอดมิน: ต้องรู้รหัสถึงจะเข้าโหมดแอดมินได้ (ตั้งผ่าน ADMIN_PASSWORD หรือให้เซิร์ฟเวอร์สุ่มให้ตอนเปิดครั้งแรก)
+ * - ระบบผู้สร้าง (แอดมิน): ต้องรู้รหัสถึงจะเข้าได้ รหัสเริ่มต้น nampan (เก็บเป็นแฮช) เปลี่ยนได้ในเกม/หน้าล็อบบี้ (ต้องใส่รหัสเดิมก่อน)
  */
 const http = require('http');
 const fs = require('fs');
@@ -13,9 +13,9 @@ const crypto = require('crypto');
 
 const PORT = +process.env.PORT || 3000;
 const MAX_PLAYERS = 50;
-const TICK_MS = 66; // ~15 ครั้ง/วินาที
+const TICK_MS = 50; // 20 ครั้ง/วินาที
+const CITY_NAME = 'Np-city RP';
 const DATA_FILE = path.join(__dirname, 'data.json');
-const ADMIN_FILE = path.join(__dirname, 'admin.json');
 
 /* ------------------------------ บันทึกเงิน/อาชีพ ------------------------------ */
 let saves = {};
@@ -27,37 +27,32 @@ function flushSaves() {
   try { fs.writeFileSync(DATA_FILE, JSON.stringify(saves)); } catch (e) { console.error('save failed:', e.message); }
 }
 function saveOne(p) {
+  if (p.noSave) return;
   saves[p.token] = {
     name: p.name, money: Math.floor(p.money), bank: Math.floor(p.bank), career: p.career,
-    weapons: [...p.weapons], car: p.carModel ? { m: p.carModel, c: p.carColor } : null, ts: Date.now(),
+    weapons: [...p.weapons], car: p.carModel ? { m: p.carModel, c: p.carColor } : null,
+    look: p.look, inv: p.inv, unl: [...p.unl], prog: p.prog, ts: Date.now(),
   };
   dirty = true;
 }
 setInterval(() => { for (const p of players.values()) saveOne(p); flushSaves(); }, 10000);
 
-/* ------------------------------ รหัสแอดมิน ------------------------------ */
+/* ------------------------------ รหัสแอดมิน / รหัสผู้สร้าง ------------------------------ */
 const hashPw = (pw, salt) => crypto.scryptSync(pw, salt, 32);
-let adminCred = null;
-let generatedPw = null;
-try {
-  const j = JSON.parse(fs.readFileSync(ADMIN_FILE, 'utf8'));
-  if (j.salt && j.hash) adminCred = { salt: Buffer.from(j.salt, 'hex'), hash: Buffer.from(j.hash, 'hex') };
-} catch (e) { /* ยังไม่มีไฟล์ */ }
-function setAdminPw(pw, persist) {
-  const salt = crypto.randomBytes(16);
-  adminCred = { salt, hash: hashPw(pw, salt) };
-  if (persist) {
-    try { fs.writeFileSync(ADMIN_FILE, JSON.stringify({ salt: salt.toString('hex'), hash: adminCred.hash.toString('hex') }), { mode: 0o600 }); }
-    catch (e) { console.error('cannot save admin.json:', e.message); }
-  }
+const DEF_SALT = Buffer.from('ccc0a10f5f78faadcf00d77986414179', 'hex');
+const DEF_HASH = Buffer.from('726c5e818ab77f02f03e01f015f8dab657f2687f8431e52ae0d0e9e2e4d78e59', 'hex'); // แฮชของรหัสเริ่มต้น nampan
+function mkCred(envName) {
+  const v = process.env[envName];
+  if (v && String(v).length > 0) { const salt = crypto.randomBytes(16); return { salt, hash: hashPw(String(v), salt), env: true }; }
+  return { salt: DEF_SALT, hash: DEF_HASH, env: false };
 }
-if (!adminCred) {
-  if (process.env.ADMIN_PASSWORD) setAdminPw(String(process.env.ADMIN_PASSWORD), false);
-  else { generatedPw = crypto.randomBytes(9).toString('base64url'); setAdminPw(generatedPw, true); }
-}
-function checkAdminPw(pw) {
+// รหัสแอดมิน (ช่องในหน้าล็อบบี้): ตั้งที่ Render → Environment → ADMIN_PASSWORD (ไม่ตั้ง = nampan)
+// รหัสระบบผู้สร้าง (ปลดล็อกแท็บ ประกาศ/เตะ/เสก/รีเซ็ต): CREATOR_PASSWORD (ไม่ตั้ง = nampan)
+const CRED = { admin: mkCred('ADMIN_PASSWORD'), creator: mkCred('CREATOR_PASSWORD') };
+function checkPw(which, pw) {
+  const c = CRED[which];
   if (typeof pw !== 'string' || pw.length === 0 || pw.length > 64) return false;
-  return crypto.timingSafeEqual(hashPw(pw, adminCred.salt), adminCred.hash);
+  return crypto.timingSafeEqual(hashPw(pw, c.salt), c.hash);
 }
 // กันเดารหัส: ผิด 5 ครั้งล็อก IP นั้น 10 นาที
 const fails = new Map();
@@ -70,27 +65,39 @@ function recordFail(ip) {
   if (f.n >= 5) f.until = now + 600000;
   fails.set(ip, f);
 }
+/** ตรวจรหัสผู้สร้างพร้อมกันเดา: คืน 'ok' | 'bad' | 'locked' */
+function authPw(ip, pw, which = 'admin') {
+  if (ipLocked(ip)) return 'locked';
+  if (!checkPw(which, pw)) { recordFail(ip); console.log(`[admin] รหัสผิดจาก ${ip}`); return 'bad'; }
+  fails.delete(ip);
+  return 'ok';
+}
 setInterval(() => { const now = Date.now(); for (const [ip, f] of fails) if (now - f.first > 1200000) fails.delete(ip); }, 60000);
 
 /* ------------------------------ อาชีพ ------------------------------ */
 const CAREERS = {
-  worker: { n: 'พนักงานออฟฟิศ', hp: 100, def: 1,    salary: 12 },
-  taxi:   { n: 'แท็กซี่',        hp: 100, def: 1,    salary: 0 },
-  police: { n: 'ตำรวจ',          hp: 130, def: 0.75, salary: 8 },
-  thief:  { n: 'โจร',            hp: 90,  def: 1,    salary: 0 },
-  doctor: { n: 'หมอ',            hp: 100, def: 1,    salary: 6 },
+  worker:  { n: 'พนักงานออฟฟิศ', hp: 100, def: 1,    salary: 12 },
+  student: { n: 'นักเรียน',       hp: 100, def: 1,    salary: 4 },   // ไปโรงเรียนได้ค่าขนม/ทุนเพิ่ม
+  fisher:  { n: 'นักตกปลา',       hp: 100, def: 1,    salary: 0 },   // ตกปลาที่บ่อ ขายที่ตลาดปลา
+  taxi:    { n: 'แท็กซี่',        hp: 100, def: 1,    salary: 0 },
+  police:  { n: 'ตำรวจ',          hp: 130, def: 0.75, salary: 8 },
+  doctor:  { n: 'หมอ',            hp: 100, def: 1,    salary: 6 },
+  thief:   { n: 'โจร',            hp: 90,  def: 1,    salary: 0 },
 };
+const FISH = [['🐟 ปลาซิว', 8, 0.5], ['🐠 ปลานิล', 20, 0.3], ['🐡 ปลาช่อน', 45, 0.15], ['🦈 ปลากะพง', 120, 0.05]];
 const FARE_DIST = 150;      // แท็กซี่: ขับครบกี่พิกเซลได้ $1
 const POLICE_BOUNTY = 200;
-const MAX_AMMO = 60;
+const MAX_AMMO = 90;
 const WEAPONS = {
-  fist:    { n: '👊 มือเปล่า',   melee: true, dmg: 12, cd: 420 },
-  bat:     { n: '🏏 ไม้เบสบอล', melee: true, dmg: 24, cd: 520 },
-  pistol:  { n: '🔫 ปืนพก',      dmg: 22, cd: 350, range: 520, pellets: 1, spread: 0 },
-  smg:     { n: '🔫 SMG',        dmg: 11, cd: 120, range: 460, pellets: 1, spread: 0.05 },
-  shotgun: { n: '💥 ลูกซอง',     dmg: 9,  cd: 850, range: 280, pellets: 6, spread: 0.22 },
+  fist:    { n: '👊 มือเปล่า',   melee: true, dmg: 14, cd: 380, reach: 70 },
+  bat:     { n: '🏏 ไม้เบสบอล', melee: true, dmg: 26, cd: 480, reach: 84, price: 150 },
+  knife:   { n: '🔪 มีด',        melee: true, dmg: 34, cd: 360, reach: 72, price: 350 },
+  pistol:  { n: '🔫 ปืนพก',      dmg: 24, cd: 330, range: 560, pellets: 1, spread: 0,    price: 200 },
+  smg:     { n: '🔫 SMG',        dmg: 12, cd: 110, range: 500, pellets: 1, spread: 0.05, price: 900 },
+  shotgun: { n: '💥 ลูกซอง',     dmg: 10, cd: 800, range: 300, pellets: 6, spread: 0.22, price: 1200 },
+  rifle:   { n: '🎯 ไรเฟิล',     dmg: 32, cd: 220, range: 780, pellets: 1, spread: 0.02, price: 2500 },
 };
-const WORDER = ['fist', 'bat', 'pistol', 'smg', 'shotgun'];
+const WORDER = ['fist', 'bat', 'knife', 'pistol', 'smg', 'shotgun', 'rifle'];
 const CAR_MODELS = {
   hatch: { n: '🚗 แฮตช์แบ็ก',   price: 800,   max: 400, acc: 520 },
   sedan: { n: '🚙 ซีดาน',        price: 2500,  max: 470, acc: 570 },
@@ -115,11 +122,25 @@ const MENUS = {
     ['heal', '💉 รักษาจนหาย', 30, 'เลือดเต็มทันที'],
   ] },
   gun: { title: '🔫 ร้านอาวุธ', items: [
-    ['ammo',    '🔫 กระสุน 12 นัด', 40,   `ใช้กับปืนทุกกระบอก · สะสมสูงสุด ${MAX_AMMO} นัด (เฉพาะโจร)`],
-    ['bat',     '🏏 ไม้เบสบอล',     150,  'ตีแรงกว่ามือเปล่า 2 เท่า · ทุกอาชีพซื้อได้'],
-    ['pistol',  '🔫 ปืนพก',         200,  'ดาเมจ 22 · เฉพาะโจร'],
-    ['smg',     '🔫 SMG',           900,  'ยิงรัวเร็ว · เฉพาะโจร'],
-    ['shotgun', '💥 ลูกซอง',        1200, 'ยิงกระจาย ระยะใกล้แรงมาก · เฉพาะโจร'],
+    ['ammo',    '🔫 กระสุน 12 นัด', 40,   `ใช้กับปืนทุกกระบอก · สะสมสูงสุด ${MAX_AMMO} นัด`],
+    ['bat',     '🏏 ไม้เบสบอล',     150,  'ดาเมจ 26 · ระยะไกลกว่ามือเปล่า'],
+    ['knife',   '🔪 มีด',           350,  'ดาเมจ 34 · ฟันเร็ว'],
+    ['pistol',  '🔫 ปืนพก',         200,  'ดาเมจ 24 · แม่นยำ'],
+    ['smg',     '🔫 SMG',           900,  'ยิงรัวเร็ว ดาเมจ 12/นัด'],
+    ['shotgun', '💥 ลูกซอง',        1200, 'ยิงกระจาย ระยะใกล้แรงมาก'],
+    ['rifle',   '🎯 ไรเฟิล',        2500, 'ดาเมจ 32 · ยิงไกลมาก'],
+    ['sell_wpn', '💱 ขายอาวุธที่ถืออยู่', 0, 'ได้เงินคืน 50% ของราคา'],
+  ] },
+  market: { title: '🐟 ตลาดปลา', items: [
+    ['sell_fish', '💰 ขายปลาทั้งหมด', 0, 'ซิว $8 · นิล $20 · ช่อน $45 · กะพง $120 (เลเวลสูง ได้เพิ่ม)'],
+  ] },
+  police: { title: '🚓 สถานีตำรวจ', items: [
+    ['join_police', '🚓 สมัครเป็นตำรวจ', 0, 'เปลี่ยนอาชีพ แล้วกดปุ่ม 🚓 (หรือ R) จับกุมคนที่มีค่าหัวเข้าคุก'],
+  ] },
+  cloth: { title: '👕 ร้านเสื้อผ้า', colors: 12, pal: 'cloth', items: [
+    ['shirt', '👕 เปลี่ยนสีเสื้อ',   30, 'เลือกสีด้านล่างก่อนกดซื้อ'],
+    ['pants', '👖 เปลี่ยนสีกางเกง', 30, 'เลือกสีด้านล่างก่อนกดซื้อ'],
+    ['skin',  '🧑 เปลี่ยนสีผิว',    0,  'ฟรี (เลือก 0-5)'],
   ] },
   dealer: { title: '🚗 ร้านขายรถ', colors: true, items: [
     ...Object.entries(CAR_MODELS).map(([k, c]) => ['car_' + k, c.n, c.price, `วิ่งเร็วสุด ${c.max} · รับซื้อรถเก่า 50%`]),
@@ -134,10 +155,11 @@ const MENUS = {
 };
 const ITEMS = {};
 for (const [kind, m] of Object.entries(MENUS)) for (const [id, n, price] of m.items) ITEMS[id] = { kind, n, price };
+const MENU_KINDS = Object.keys(MENUS);
 const FOOD = { snack: 15, drink: 10, noodle: 30, burger: 40, steak: 80 };
 
 /* ------------------------------ แผนที่เมือง ------------------------------ */
-const CELL = 400, N = 8, W = CELL * N, ROAD = 120;
+const CELL = 400, N = 14, W = CELL * N, ROAD = 120;
 function mulberry32(a) {
   return () => {
     a |= 0; a = (a + 0x6D2B79F5) | 0;
@@ -148,26 +170,45 @@ function mulberry32(a) {
 }
 const rnd = mulberry32(20261113);
 const PLACES = {
-  '1,1': 'shop', '6,5': 'shop',
-  '3,4': 'job', '5,2': 'job',
-  '2,6': 'rest', '5,5': 'rest',
-  '4,2': 'hosp', '3,1': 'bank', '7,7': 'gun', '6,2': 'dealer',
+  '2,2': 'shop', '11,3': 'shop', '7,9': 'shop', '3,11': 'shop', '12,12': 'shop',
+  '5,4': 'job', '9,8': 'job', '3,7': 'job',
+  '4,2': 'rest', '10,5': 'rest', '6,7': 'rest', '11,10': 'rest',
+  '7,2': 'hosp', '2,12': 'hosp',
+  '5,6': 'bank', '10,2': 'bank',
+  '13,8': 'gun', '1,5': 'gun',
+  '8,5': 'dealer', '3,3': 'dealer', '11,11': 'dealer',
+  '7,7': 'farm', '3,10': 'farm', '11,6': 'farm',          // เซฟโซน 3 จุด (จุดยืนฟามเงิน)
+  '12,1': 'lake', '1,8': 'lake', '9,12': 'lake',          // บ่อตกปลา
+  '12,2': 'market', '2,8': 'market', '10,12': 'market',   // ตลาดปลา
+  '4,9': 'cloth', '10,9': 'cloth',                        // ร้านเสื้อผ้า
+  '6,3': 'school', '12,6': 'school',                      // โรงเรียน
+  '9,3': 'jail',                                          // คุก
+  '8,3': 'police',                                        // สถานีตำรวจ (เดินเข้าลานได้)
 };
-const KIND_IDX = { bld: 0, park: 1, shop: 2, job: 3, rest: 4, hosp: 5, bank: 6, gun: 7, dealer: 8 };
+const KIND_IDX = { bld: 0, park: 1, shop: 2, job: 3, rest: 4, hosp: 5, bank: 6, gun: 7, dealer: 8, farm: 9, lake: 10, market: 11, cloth: 12, school: 13, jail: 14, police: 15 };
 const blocks = [];
 for (let i = 0; i < N; i++) {
   for (let j = 0; j < N; j++) {
     let k = PLACES[i + ',' + j];
-    if (!k) k = rnd() < 0.18 ? 'park' : 'bld';
+    if (!k) k = rnd() < 0.16 ? 'park' : 'bld';
     blocks.push({
       x: i * CELL + ROAD / 2, y: j * CELL + ROAD / 2, w: CELL - ROAD, h: CELL - ROAD,
       k, c: Math.floor(rnd() * 6), z: Math.floor(20 + rnd() * 50),
     });
   }
 }
-const solid = blocks.filter(b => b.k !== 'park');
+const solid = blocks.filter(b => b.k !== 'park' && b.k !== 'farm' && b.k !== 'police');
+// สถานีตำรวจ: เดินเข้าลานด้านหน้าได้ ส่วนตัวอาคารด้านหลังเป็นของแข็ง
+for (const b of blocks) if (b.k === 'police') solid.push({ x: b.x + b.w * 0.15, y: b.y + b.h * 0.06, w: b.w * 0.7, h: b.h * 0.34, k: 'bld' });
 const byKind = {};
 for (const b of blocks) (byKind[b.k] = byKind[b.k] || []).push(b);
+const farms = byKind.farm || [], jailBlock = (byKind.jail || [])[0];
+/** อยู่ในเซฟโซน (ลานฟาม) หรือไม่ */
+function inSafe(p) {
+  for (const b of farms) if (p.x > b.x - 8 && p.x < b.x + b.w + 8 && p.y > b.y - 8 && p.y < b.y + b.h + 8) return true;
+  return false;
+}
+const nearestOf = (list, x, y) => { let best = list[0], bd = 1e18; for (const b of list) { const d = (b.x + b.w / 2 - x) ** 2 + (b.y + b.h / 2 - y) ** 2; if (d < bd) { bd = d; best = b; } } return best; };
 
 /** ดันวงกลมออกจากตึก คืนค่า {x,y,hit} */
 function collide(x, y, r) {
@@ -217,7 +258,7 @@ function spawnPoint() {
 
 /* ------------------------------ รถ ------------------------------ */
 const cars = [];
-for (let n = 1; n <= 16; n++) {
+for (let n = 1; n <= 6; n++) {
   let x, y, ang;
   if (rnd() < 0.5) {
     const i = Math.floor(rnd() * N), j = 1 + Math.floor(rnd() * (N - 1));
@@ -243,7 +284,7 @@ function mvStep(m, dist, off, straight) {
   const kp = Math.floor(a / CELL), kn = Math.floor(na / CELL);
   if (kp !== kn) {
     const k = dir > 0 ? kn : kp, r = Math.random();
-    if (r > straight && k >= 1 && k <= 7) {
+    if (r > straight && k >= 1 && k <= N - 1) {
       const nhd = r < straight + (1 - straight) / 2 ? (m.hd + 1) % 4 : (m.hd + 3) % 4;
       mvPlace(m, nhd, k, m.line * CELL, off);
       return;
@@ -252,16 +293,16 @@ function mvStep(m, dist, off, straight) {
   if (horiz) m.x = na; else m.y = na;
 }
 const randAlong = () => Math.random() * (W - 200) + 100;
-const randLine = () => 1 + Math.floor(Math.random() * 7);
+const randLine = () => 1 + Math.floor(Math.random() * (N - 1));
 const npcCars = [];
-for (let n = 0; n < 12; n++) {
+for (let n = 0; n < 5; n++) {
   const car = { id: cars.length + 1, x: 0, y: 0, ang: 0, speed: 0, color: Math.floor(Math.random() * 8), driver: -1, idle: 0, home: null, active: true, owner: 0, max: 150, acc: 200, npc: true, hd: 0, line: 1, stop: 0, ghost: 0 };
   mvPlace(car, Math.floor(Math.random() * 4), randLine(), randAlong(), 22);
   car.ang = car.hd * Math.PI / 2;
   cars.push(car); npcCars.push(car);
 }
 const peds = [];
-for (let n = 0; n < 28; n++) {
+for (let n = 0; n < 40; n++) {
   const pd = { id: n + 1, x: 0, y: 0, hd: 0, line: 1, hp: 30, dead: false, respawnAt: 0, look: Math.floor(Math.random() * 8) };
   mvPlace(pd, Math.floor(Math.random() * 4), randLine(), randAlong(), 50);
   peds.push(pd);
@@ -387,7 +428,7 @@ const server = http.createServer((req, res) => {
     });
   } else if (url === '/status') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ n: players.size, max: MAX_PLAYERS, names: [...players.values()].map(p => p.name).slice(0, 30) }));
+    res.end(JSON.stringify({ city: CITY_NAME, n: players.size, max: MAX_PLAYERS, names: [...players.values()].map(p => p.name).slice(0, 30) }));
   } else {
     res.writeHead(404); res.end('Not found');
   }
@@ -420,11 +461,29 @@ function cleanText(s, max) {
   return Array.from(String(s || '').replace(/[\u0000-\u001f\u007f]/g, '').trim()).slice(0, max).join('');
 }
 function sendRoster() {
-  broadcast({ t: 'roster', list: [...players.values()].map(p => [p.id, p.name, p.career, p.platform, p.admin ? 1 : 0]) });
+  broadcast({ t: 'roster', list: [...players.values()].map(p => [p.id, p.name, p.career, p.platform, p.admin ? 1 : 0, p.look[0], p.look[1], p.look[2]]) });
 }
 const feed = m => broadcast({ t: 'feed', m });
 const toast = (p, m) => send(p, { t: 'toast', m });
-const canShoot = p => p.career === 'thief' || p.admin;
+const canShoot = p => !(p.jailUntil > Date.now());
+const lvlOf = g => 1 + Math.floor(Math.sqrt(g.xp / 25));
+const progOf = p => p.prog[p.career] || (p.prog[p.career] = { xp: 0, earned: 0, n: 0 });
+/** รายได้จากอาชีพ: ได้ XP + โบนัสตามเลเวล (เซฟแยกตามอาชีพ) */
+function earn(p, base, bonus = true) {
+  if (!(base > 0)) return;
+  const g = progOf(p), l0 = lvlOf(g);
+  const amt = bonus ? base * (1 + 0.08 * (l0 - 1)) : base;
+  p.money += amt; g.earned += amt; g.xp += amt;
+  const l1 = lvlOf(g);
+  if (l1 > l0) toast(p, `⭐ ${CAREERS[p.career].n} เลเวล ${l1}! รายได้เพิ่มขึ้น`);
+}
+function revokeAdmins(except) {
+  let n = 0;
+  for (const q of players.values()) {
+    if (q !== except && q.admin) { q.admin = false; q.fast = q.god = q.inf = false; n++; toast(q, '🔒 รหัสผู้สร้างถูกเปลี่ยน สิทธิ์ของคุณสิ้นสุดแล้ว'); }
+  }
+  if (n) sendRoster();
+}
 
 function doJoin(c, m) {
   clearTimeout(c.joinTimer);
@@ -438,18 +497,28 @@ function doJoin(c, m) {
 
   let isAdmin = false;
   if (typeof m.admin === 'string' && m.admin.length > 0) {
-    if (ipLocked(c.ip)) return refuse(c, 'ใส่รหัสแอดมินผิดหลายครั้ง ถูกล็อกชั่วคราว ลองใหม่ภายหลัง');
-    if (!checkAdminPw(m.admin)) {
-      recordFail(c.ip);
-      console.log(`[admin] รหัสผิดจาก ${c.ip}`);
-      return refuse(c, 'รหัสแอดมินไม่ถูกต้อง');
-    }
-    fails.delete(c.ip);
+    const r = authPw(c.ip, m.admin);
+    if (r === 'locked') return refuse(c, 'ใส่รหัสแอดมินผิดหลายครั้ง ถูกล็อกชั่วคราว ลองใหม่ภายหลัง');
+    if (r === 'bad') return refuse(c, 'รหัสแอดมินไม่ถูกต้อง');
     isAdmin = true;
   }
 
   const save = saves[token];
-  const career = CAREERS[m.career] ? m.career : (save && CAREERS[save.career] ? save.career : 'worker');
+  const unl = new Set(save && Array.isArray(save.unl) ? save.unl.filter(k => CAREERS[k]) : []);
+  const okCareer = k => CAREERS[k] && (!CAREERS[k].price || unl.has(k) || isAdmin);
+  const career = okCareer(m.career) ? m.career : (save && okCareer(save.career) ? save.career : 'worker');
+  const lk = Array.isArray(m.look) ? m.look : (save && Array.isArray(save.look) ? save.look : null);
+  const ri = n => Math.floor(Math.random() * n);
+  const look = lk ? [clamp(lk[0] | 0, 0, 11), clamp(lk[1] | 0, 0, 11), clamp(lk[2] | 0, 0, 5)] : [ri(12), ri(12), ri(6)];
+  const inv = [0, 0, 0, 0];
+  if (save && Array.isArray(save.inv)) for (let i = 0; i < 4; i++) inv[i] = clamp(save.inv[i] | 0, 0, 9999);
+  const prog = {};
+  if (save && save.prog && typeof save.prog === 'object') {
+    for (const k of Object.keys(CAREERS)) {
+      const g = save.prog[k];
+      if (g && typeof g === 'object') prog[k] = { xp: Math.max(0, +g.xp || 0), earned: Math.max(0, +g.earned || 0), n: Math.max(0, g.n | 0) };
+    }
+  }
   const sp = spawnPoint();
   const now = Date.now();
   const p = {
@@ -464,24 +533,29 @@ function doJoin(c, m) {
     dead: false, respawnAt: 0, protectUntil: now + 3000, wantedUntil: 0,
     lastPunch: 0, punchT: 0, lastShot: 0, hurtT: 0, lastHurt: 0, lastCarHit: 0, lastChat: 0,
     payAcc: 0, fareAcc: 0, lastMe: '',
+    look, inv, unl, prog, jailUntil: 0, fishing: 0, farmAcc: 0, studyAcc: 0, work: false, lastSafeMsg: 0,
   };
+  progOf(p);
   c.p = p;
   players.set(p.id, p);
   { const si = slotUsed.indexOf(false); slotUsed[si] = true; p.carSlot = PRIV0 + si + 1; }
   if (save && Array.isArray(save.weapons)) for (const k of save.weapons) if (WEAPONS[k]) p.weapons.add(k);
   if (career === 'thief') p.weapons.add('pistol');
   if (isAdmin) for (const k of WORDER) p.weapons.add(k);
-  p.weapon = p.weapons.has('pistol') && canShoot(p) ? 'pistol' : 'fist';
-  if (save && save.car && CAR_MODELS[save.car.m]) { p.carModel = save.car.m; p.carColor = (save.car.c | 0) & 7; placeCar(p); }
+  p.weapon = p.weapons.has('pistol') ? 'pistol' : 'fist';
+  if (p.weapon !== 'fist') p.ammo = 24;
+  if (save && save.car && CAR_MODELS[save.car.m]) { p.carModel = save.car.m; p.carColor = (save.car.c | 0) & 7; placeCar(p, nearestOf(byKind.dealer, p.x, p.y)); }
   send(p, {
     t: 'welcome', id: p.id, token, W, max: MAX_PLAYERS, admin: isAdmin, weapons: WEAPONS, worder: WORDER,
+    city: CITY_NAME, fish: FISH.map(f => [f[0], f[1]]),
+    careers: Object.fromEntries(Object.entries(CAREERS).map(([k, v]) => [k, { n: v.n, price: v.price || 0 }])),
     blocks: blocks.map(b => [b.x, b.y, b.w, b.h, KIND_IDX[b.k], b.c, b.z]),
     you: { x: p.x, y: p.y },
     menus: MENUS,
   });
   sendRoster();
-  feed(`➕ ${isAdmin ? '🛡️ ' : ''}${p.name} เข้าเมือง (${players.size}/${MAX_PLAYERS})`);
-  if (isAdmin) console.log(`[admin] ${p.name} เข้าสู่ระบบแอดมิน`);
+  feed(`➕ ${isAdmin ? '🛠️ ' : ''}${p.name} เข้าเมือง (${players.size}/${MAX_PLAYERS})`);
+  if (isAdmin) console.log(`[admin] ${p.name} เข้าสู่ระบบผู้สร้าง`);
   saveOne(p);
 }
 function leave(p) {
@@ -500,7 +574,10 @@ function onMessage(c, str) {
   let m;
   try { m = JSON.parse(str); } catch (e) { return; }
   if (!m || typeof m.t !== 'string') return;
-  if (!c.p) { if (m.t === 'join') doJoin(c, m); return; }
+  if (!c.p) {
+    if (m.t === 'join') doJoin(c, m);
+    return;
+  }
   const p = c.p, now = Date.now();
   switch (m.t) {
     case 'in':
@@ -516,20 +593,34 @@ function onMessage(c, str) {
       shoot(p, now); break;
     case 'e': toggleCar(p); break;
     case 'buy': doBuy(p, String(m.item || ''), m); break;
-    case 'job':
-      if (p.dead || p.car || !CAREERS[m.career] || !nearBlock(p, byKind.job || [], 60)) return;
-      p.career = m.career; p.maxhp = CAREERS[p.career].hp; p.hp = Math.min(p.hp, p.maxhp);
-      p.payAcc = 0; p.fareAcc = 0;
-      if (p.career === 'thief') { p.ammo = Math.max(p.ammo, 12); p.weapons.add('pistol'); }
-      if (!canShoot(p) && WEAPONS[p.weapon] && !WEAPONS[p.weapon].melee) p.weapon = 'fist';
-      toast(p, `เปลี่ยนอาชีพเป็น ${CAREERS[p.career].n} แล้ว`);
-      sendRoster();
+    case 'job': {
+      if (p.dead || p.car || p.jailUntil > now || !CAREERS[m.career] || !nearBlock(p, byKind.job || [], 60)) return;
+      const cd = CAREERS[m.career];
+      if (cd.price && !p.unl.has(m.career) && !p.admin) {
+        if (!m.buy) return toast(p, `🔒 ${cd.n} ล็อกอยู่ ต้องซื้อในเกมราคา $${cd.price.toLocaleString()}`);
+        if (p.money < cd.price) return toast(p, `เงินไม่พอ 💸 (ต้องใช้ $${cd.price.toLocaleString()})`);
+        p.money -= cd.price; p.unl.add(m.career);
+        toast(p, `🔓 ปลดล็อกอาชีพ ${cd.n} แล้ว!`);
+      }
+      setCareer(p, m.career);
       break;
+    }
+    case 'fish': castFish(p, now); break;
+    case 'arrest': arrest(p, now); break;
+    case 'give': doGive(p, m); break;
     case 'chat': {
       if (now - p.lastChat < 800) return;
       const text = cleanText(m.m, 100);
       if (!text) return;
       p.lastChat = now;
+      const wm = /^\/w\s+(\S+)\s+(.+)$/i.exec(text);
+      if (wm) {
+        const t = [...players.values()].find(q => q.name.toLowerCase() === wm[1].toLowerCase());
+        if (!t) return toast(p, 'ไม่พบผู้เล่นชื่อนี้ (พิมพ์ /w ชื่อ ข้อความ)');
+        const o = { t: 'chat', id: p.id, n: `🔒 ${p.name} → ${t.name}`, m: wm[2], a: 0, b: 0 };
+        send(p, o); if (t !== p) send(t, o);
+        break;
+      }
       if (/^\/me\s+/i.test(text)) { broadcast({ t: 'chat', id: p.id, n: '✦', m: p.name + ' ' + text.replace(/^\/me\s+/i, ''), a: 0, b: 0 }); break; }
       broadcast({ t: 'chat', id: p.id, n: p.name, m: text, a: p.admin ? 1 : 0, b: 1 });
       break;
@@ -537,7 +628,6 @@ function onMessage(c, str) {
     case 'wpn': {
       const id = String(m.w || '');
       if (!WEAPONS[id] || !p.weapons.has(id)) return;
-      if (!WEAPONS[id].melee && !canShoot(p)) return toast(p, 'อาวุธปืนใช้ได้เฉพาะอาชีพโจร 🦹');
       p.weapon = id;
       break;
     }
@@ -550,20 +640,32 @@ function onMessage(c, str) {
 }
 
 /* ---- ซื้อของ / ร้านขายรถ ---- */
-function dealerSpot(car) {
-  const b = (byKind.dealer || [])[0];
+function dealerSpot(car, b) {
+  b = b || (byKind.dealer || [])[0];
   if (!b) return { x: 400, y: 400 };
   return { x: b.x + 40 + (car.id % 5) * 50, y: b.y + b.h + 28 };
 }
-function placeCar(p) {
+/** วางรถส่วนตัวของผู้เล่น: at = บล็อกร้านขายรถ หรือจุด {x,y} */
+function placeCar(p, at) {
   const car = cars[p.carSlot - 1], def = CAR_MODELS[p.carModel];
   if (!car || !def) return;
-  const sp = dealerSpot(car);
+  const sp = at && at.w === undefined && at.x !== undefined ? { x: at.x, y: at.y } : dealerSpot(car, at);
   Object.assign(car, { active: true, owner: p.id, x: sp.x, y: sp.y, ang: 0, speed: 0, driver: 0, idle: 0, color: p.carColor, max: def.max, acc: def.acc });
+}
+function nearBlk(p, list, range) {
+  for (const b of list) {
+    const dx = Math.max(b.x - p.x, 0, p.x - (b.x + b.w));
+    const dy = Math.max(b.y - p.y, 0, p.y - (b.y + b.h));
+    if (Math.hypot(dx, dy) < range) return b;
+  }
+  return null;
 }
 function doBuy(p, id, m) {
   const it = ITEMS[id];
-  if (!it || p.dead || p.car || !nearBlock(p, byKind[it.kind] || [], 60)) return;
+  const now = Date.now();
+  if (!it || p.dead || p.car || p.jailUntil > now) return;
+  const shopB = nearBlk(p, byKind[it.kind] || [], 60);
+  if (!shopB) return;
 
   if (it.kind === 'bank') {
     const dep = id.startsWith('dep');
@@ -574,10 +676,35 @@ function doBuy(p, id, m) {
     return toast(p, `🏦 ${dep ? 'ฝาก' : 'ถอน'} $${amt} แล้ว`);
   }
 
+  if (it.kind === 'police') {
+    if (p.career === 'police') return toast(p, 'คุณเป็นตำรวจอยู่แล้ว 🚓');
+    setCareer(p, 'police');
+    return;
+  }
+
+  if (it.kind === 'market') {   // ขายปลา
+    let total = 0, cnt = 0;
+    for (let i = 0; i < 4; i++) { total += p.inv[i] * FISH[i][1]; cnt += p.inv[i]; p.inv[i] = 0; }
+    if (cnt <= 0) return toast(p, 'คุณไม่มีปลาให้ขาย 🎣');
+    earn(p, total);
+    progOf(p).n += 0;
+    return toast(p, `💰 ขายปลา ${cnt} ตัว ได้เงินรวม`);
+  }
+
+  if (it.kind === 'cloth') {
+    const c = m && Number.isInteger(m.color) ? m.color : -1;
+    const idx = id === 'shirt' ? 0 : id === 'pants' ? 1 : 2;
+    if (c < 0 || c > (idx === 2 ? 5 : 11)) return toast(p, 'เลือกสีก่อน แล้วค่อยกดซื้อ 🎨');
+    if (!p.inf && p.money < it.price) return toast(p, 'เงินไม่พอ 💸');
+    if (!p.inf) p.money -= it.price;
+    p.look[idx] = c; sendRoster(); saveOne(p);
+    return toast(p, '👕 เปลี่ยนลุคเรียบร้อย!');
+  }
+
   if (it.kind === 'dealer') {
     if (id === 'car_call') {
       if (!p.carModel) return toast(p, 'คุณยังไม่มีรถส่วนตัว ซื้อได้ที่นี่เลย 🚗');
-      placeCar(p);
+      placeCar(p, shopB);
       return toast(p, '📍 นำรถส่วนตัวมาจอดหน้าร้านแล้ว');
     }
     const model = id.slice(4), def = CAR_MODELS[model];
@@ -589,13 +716,21 @@ function doBuy(p, id, m) {
     if (!p.inf) p.money -= cost;
     p.carModel = model;
     p.carColor = m && Number.isInteger(m.color) && m.color >= 0 && m.color < 8 ? m.color : 0;
-    placeCar(p);
+    placeCar(p, shopB);
     return toast(p, `🎉 ซื้อ ${def.n} แล้ว จอดอยู่หน้าร้าน!${refund ? ` (รับซื้อรถเก่า $${refund})` : ''}`);
   }
 
   if (it.kind === 'gun') {
+    if (id === 'sell_wpn') {
+      const w = WEAPONS[p.weapon];
+      if (!w || !w.price || !p.weapons.has(p.weapon)) return toast(p, 'ถืออาวุธที่ขายได้ไว้ก่อน (มือเปล่าขายไม่ได้)');
+      const back = Math.floor(w.price * 0.5);
+      p.weapons.delete(p.weapon); p.money += back;
+      toast(p, `💱 ขาย ${w.n} ได้ $${back}`);
+      p.weapon = 'fist';
+      return;
+    }
     const w = WEAPONS[id];
-    if ((id === 'ammo' || (w && !w.melee)) && !canShoot(p)) return toast(p, 'อาวุธปืนขายเฉพาะอาชีพโจรเท่านั้น 🦹');
     if (w && p.weapons.has(id)) return toast(p, 'คุณมีอาวุธนี้แล้ว');
   }
   if (!p.inf && p.money < it.price) return toast(p, 'เงินไม่พอ 💸');
@@ -621,53 +756,145 @@ function doBuy(p, id, m) {
   toast(p, msg);
 }
 
-/* ---- ต่อย / ตีด้วยไม้ ---- */
+/* ---- เปลี่ยนอาชีพ / ตกปลา / จับเข้าคุก / ให้ของกัน ---- */
+function setCareer(p, k) {
+  p.career = k; p.maxhp = CAREERS[k].hp; p.hp = Math.min(p.hp, p.maxhp);
+  p.payAcc = 0; p.fareAcc = 0; p.fishing = 0;
+  if (k === 'thief') { p.ammo = Math.max(p.ammo, 12); p.weapons.add('pistol'); }
+  const g = progOf(p);
+  toast(p, `เปลี่ยนอาชีพเป็น ${CAREERS[k].n} (เลเวล ${lvlOf(g)}) · ความคืบหน้าของอาชีพนี้ถูกเซฟไว้`);
+  saveOne(p); sendRoster();
+}
+function castFish(p, now) {
+  if (p.career !== 'fisher' || p.dead || p.car || p.jailUntil > now) return;
+  if (p.fishing) { p.fishing = 0; return toast(p, '🎣 เก็บเบ็ดแล้ว'); }
+  if (!nearBlock(p, byKind.lake || [], 90)) return toast(p, '🎣 ต้องไปยืนริมบ่อตกปลา (พื้นที่สีน้ำเงิน)');
+  p.fishing = now + 2500 + Math.random() * 3500;
+  toast(p, '🎣 หย่อนเบ็ดแล้ว รอปลากินเบ็ด... (ขยับตัว = เก็บเบ็ด)');
+}
+function catchFish(p, now) {
+  const g = progOf(p), boost = Math.min(0.15, (lvlOf(g) - 1) * 0.015);
+  const w = [0.5 - boost, 0.3, 0.15 + boost * 0.6, 0.05 + boost * 0.4];
+  let r = Math.random(), i = 0;
+  while (i < 3 && r >= w[i]) { r -= w[i]; i++; }
+  p.inv[i]++; g.n++; g.xp += FISH[i][1] * 0.5;
+  toast(p, `🎣 ได้ ${FISH[i][0]}! (มี ${p.inv[i]} ตัว) นำไปขายที่ตลาดปลา`);
+  p.fishing = now + 2500 + Math.random() * 3500;
+}
+function jailPlayer(q, by, now) {
+  const stars = Math.max(1, q.stars || 1), secs = 25 + 15 * stars;
+  if (q.car) { const cr = cars[q.car - 1]; if (cr) cr.driver = 0; q.car = 0; }
+  q.jailUntil = now + secs * 1000; q.wantedUntil = 0; q.stars = 0; q.fishing = 0; q.kx = q.ky = 0;
+  if (jailBlock) { q.x = jailBlock.x + jailBlock.w / 2 + (Math.random() - 0.5) * 100; q.y = jailBlock.y + jailBlock.h / 2 + (Math.random() - 0.5) * 100; }
+  const fine = q.inf ? 0 : Math.floor(q.money * 0.1);
+  q.money -= fine;
+  toast(q, `🚔 คุณถูกจับเข้าคุก ${secs} วินาที (ค่าปรับ $${fine})`);
+  if (by) {
+    const bounty = POLICE_BOUNTY + 50 * stars;
+    earn(by, bounty); progOf(by).n++;
+    feed(`🚓 ตำรวจ ${by.name} จับ ${q.name} เข้าคุก ${secs} วิ (ค่าหัว $${bounty})`);
+  } else feed(`🚔 ${q.name} ถูกจับเข้าคุก ${secs} วินาที`);
+}
+function arrest(p, now) {
+  if (p.career !== 'police' || p.dead || p.car || p.jailUntil > now) return;
+  let best = null, bd = 120;
+  for (const q of players.values()) {
+    if (q === p || q.dead || q.car || q.jailUntil > now || q.wantedUntil <= now || inSafe(q)) continue;
+    const d = Math.hypot(q.x - p.x, q.y - p.y);
+    if (d < bd) { bd = d; best = q; }
+  }
+  if (!best) return toast(p, '🚓 ไม่มีผู้ต้องหา (ต้องมีดาวค่าหัวและอยู่ใกล้คุณ)');
+  jailPlayer(best, p, now);
+}
+function doGive(p, m) {
+  const t = players.get(+m.id);
+  if (!t || t === p || t.dead || p.dead) return;
+  if (Math.hypot(t.x - p.x, t.y - p.y) > 220) return toast(p, 'ต้องอยู่ใกล้กันถึงจะให้ของได้');
+  if (m.k === 'money') {
+    const amt = Math.floor(+m.amt);
+    if (!(amt > 0) || amt > 1e9) return toast(p, 'จำนวนเงินไม่ถูกต้อง');
+    if (!p.inf && amt > p.money) return toast(p, 'เงินไม่พอ 💸');
+    if (!p.inf) p.money -= amt;
+    t.money += amt;
+    toast(p, `🎁 ให้เงิน $${amt.toLocaleString()} แก่ ${t.name}`); toast(t, `🎁 ${p.name} ให้เงินคุณ $${amt.toLocaleString()}`);
+  } else if (m.k === 'fish') {
+    const f = clamp(m.f | 0, 0, 3), n = Math.min(Math.max(1, m.amt | 0), p.inv[f]);
+    if (n <= 0) return toast(p, 'คุณไม่มีปลาชนิดนี้');
+    p.inv[f] -= n; t.inv[f] += n;
+    toast(p, `🎁 ให้ ${FISH[f][0]} ${n} ตัวแก่ ${t.name}`); toast(t, `🎁 ${p.name} ให้ ${FISH[f][0]} ${n} ตัว`);
+  }
+}
+
+/* ---- ต่อย / ตีด้วยอาวุธประชิด (ช่วยเล็ง: เลือกเป้าที่ใกล้ที่สุดด้านหน้าแล้วหันหาให้) ---- */
+const angDiff = (a, b) => { let d = a - b; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return d; };
+function noFight(p, now) {
+  if (inSafe(p)) {
+    if (now - p.lastSafeMsg > 2000) { p.lastSafeMsg = now; toast(p, '🟢 เซฟโซน ห้ามต่อสู้'); }
+    return true;
+  }
+  return false;
+}
 function punch(p, now) {
-  const w = p.weapon === 'bat' ? WEAPONS.bat : WEAPONS.fist;
-  if (p.dead || p.car || now - p.lastPunch < w.cd) return;
+  const wd = WEAPONS[p.weapon], w = wd && wd.melee ? wd : WEAPONS.fist;
+  if (p.dead || p.car || p.jailUntil > now || now - p.lastPunch < w.cd) return;
+  if (noFight(p, now)) return;
   p.lastPunch = now; p.punchT = now;
-  const reach = w === WEAPONS.bat ? 76 : 62;
-  const ca = Math.cos(p.ang), sa = Math.sin(p.ang);
+  const reach = w.reach + 10, ca = Math.cos(p.ang), sa = Math.sin(p.ang);
   let best = null, bd = 1e9;
   for (const q of players.values()) {
     if (q === p || q.dead || q.car) continue;
     const dx = q.x - p.x, dy = q.y - p.y, d = Math.hypot(dx, dy);
-    if (d > reach) continue;
-    if (d > 8 && (dx * ca + dy * sa) / d < 0.3) continue;
+    if (d > reach || (d > 10 && (dx * ca + dy * sa) / d < -0.1)) continue;
     if (d < bd) { bd = d; best = q; }
   }
   if (!best) {
+    let bp = null, pdist = 1e9;
     for (const pd of peds) {
       if (pd.dead) continue;
       const dx = pd.x - p.x, dy = pd.y - p.y, d = Math.hypot(dx, dy);
-      if (d > reach || (d > 8 && (dx * ca + dy * sa) / d < 0.3)) continue;
-      pd.hp -= w.dmg;
-      if (pd.hp <= 0) killPed(pd, p, now);
-      return;
+      if (d > reach || (d > 10 && (dx * ca + dy * sa) / d < -0.1)) continue;
+      if (d < pdist) { pdist = d; bp = pd; }
+    }
+    if (bp) {
+      p.ang = Math.atan2(bp.y - p.y, bp.x - p.x);
+      bp.hp -= w.dmg;
+      if (bp.hp <= 0) killPed(bp, p, now);
     }
     return;
   }
-  if (now < best.protectUntil) return;
+  p.ang = Math.atan2(best.y - p.y, best.x - p.x);
+  if (now < best.protectUntil || inSafe(best)) return;
   const dx = best.x - p.x, dy = best.y - p.y, d = Math.hypot(dx, dy) || 1;
   best.kx = (dx / d) * 280; best.ky = (dy / d) * 280;
   if (p.career === 'thief' && !best.inf) {
     const s = Math.min(Math.floor(best.money * 0.12), 60);
     if (s > 0) { best.money -= s; p.money += s; }
   }
-  damage(best, p.career === 'police' && w === WEAPONS.fist ? 14 : w.dmg, p, now);
+  damage(best, p.career === 'police' && w === WEAPONS.fist ? 16 : w.dmg, p, now);
 }
 
-/* ---- ยิงปืน (โจร/แอดมิน) ---- */
+/* ---- ยิงปืน (ทุกอาชีพ มีช่วยเล็งอัตโนมัติ) ---- */
 function shoot(p, now) {
   const w = WEAPONS[p.weapon];
-  if (p.dead || p.car || !w || w.melee || !canShoot(p)) return;
+  if (p.dead || p.car || p.jailUntil > now || !w || w.melee) return;
   if (now - p.lastShot < w.cd * 0.9) return;
+  if (noFight(p, now)) return;
   if (!p.inf && p.ammo <= 0) { p.lastShot = now; return toast(p, '🔫 กระสุนหมด! ซื้อเพิ่มที่ร้านอาวุธ'); }
   p.lastShot = now;
   if (!p.inf) p.ammo--;
+  // ช่วยเล็ง: ถ้ามีผู้เล่นอยู่ใกล้แนวเล็ง (±0.34 rad) ให้หันไปหาเป้านั้น
+  let base = p.ang, bs = 9;
+  for (const q of players.values()) {
+    if (q === p || q.dead || q.car || inSafe(q)) continue;
+    const dx = q.x - p.x, dy = q.y - p.y, d = Math.hypot(dx, dy);
+    if (d > w.range || d < 1) continue;
+    const df = Math.abs(angDiff(Math.atan2(dy, dx), p.ang));
+    if (df < 0.34 && df + d / 6000 < bs) { bs = df + d / 6000; base = Math.atan2(dy, dx); }
+  }
+  p.ang = base;
   const lines = [], hits = new Map();
   for (let n = 0; n < w.pellets; n++) {
-    const a = p.ang + (w.pellets > 1 ? (n / (w.pellets - 1) - 0.5) * 2 * w.spread : (Math.random() - 0.5) * 2 * w.spread);
+    const a = base + (w.pellets > 1 ? (n / (w.pellets - 1) - 0.5) * 2 * w.spread : (Math.random() - 0.5) * 2 * w.spread);
     const ca = Math.cos(a), sa = Math.sin(a);
     let reach = w.range;
     for (let d = 14; d <= w.range; d += 10) {
@@ -678,14 +905,14 @@ function shoot(p, now) {
       if (q === p || q.dead || q.car) continue;
       const dx = q.x - p.x, dy = q.y - p.y, t = dx * ca + dy * sa;
       if (t < 0 || t > reach + 14) continue;
-      if (Math.abs(-dx * sa + dy * ca) > 22) continue;
+      if (Math.abs(-dx * sa + dy * ca) > 28) continue;
       if (t < bt) { bt = t; best = q; }
     }
     let pedHit = null, pt = best ? bt : 1e9;
     for (const pd of peds) {
       if (pd.dead) continue;
       const dx = pd.x - p.x, dy = pd.y - p.y, t = dx * ca + dy * sa;
-      if (t < 0 || t > reach + 14 || Math.abs(-dx * sa + dy * ca) > 20) continue;
+      if (t < 0 || t > reach + 14 || Math.abs(-dx * sa + dy * ca) > 22) continue;
       if (t < pt) { pt = t; pedHit = pd; }
     }
     const end = pedHit ? pt : (best ? bt : reach);
@@ -702,13 +929,13 @@ function shoot(p, now) {
 }
 
 function damage(v, amt, att, now) {
-  if (v.dead || v.god || now < v.protectUntil) return;
+  if (v.dead || v.god || now < v.protectUntil || v.jailUntil > now || inSafe(v)) return;
   v.hp -= amt * CAREERS[v.career].def;
   v.hurtT = now; v.lastHurt = now;
   if (v.hp <= 0) kill(v, att, now);
 }
 function kill(v, att, now) {
-  v.hp = 0; v.dead = true; v.respawnAt = now + 3000; v.kx = v.ky = 0;
+  v.hp = 0; v.dead = true; v.respawnAt = now + 3000; v.kx = v.ky = 0; v.fishing = 0;
   if (v.car) { const cr = cars[v.car - 1]; if (cr) cr.driver = 0; v.car = 0; }
   const lose = v.inf ? 0 : Math.floor(v.money * 0.2); // เงินในธนาคารไม่หาย
   v.money -= lose;
@@ -717,20 +944,21 @@ function kill(v, att, now) {
     if (v.wantedUntil > now) {
       if (att.career === 'police') {
         const bounty = POLICE_BOUNTY + 50 * (v.stars || 0);
-        att.money += bounty; v.wantedUntil = 0; v.stars = 0;
-        feed(`🚓 ตำรวจ ${att.name} จับ ${v.name} ได้ รับค่าหัว $${bounty}`);
+        earn(att, bounty); v.wantedUntil = 0; v.stars = 0;
+        feed(`🚓 ตำรวจ ${att.name} จัดการ ${v.name} ได้ รับค่าหัว $${bounty}`);
         return;
       }
     } else if (att.career !== 'police') {
       addStar(att, now);
     }
-    feed(`${att.career === 'thief' && att.lastShot > now - 400 ? '🔫' : '👊'} ${att.name} น็อค ${v.name}`);
+    feed(`${att.lastShot > now - 400 ? '🔫' : '👊'} ${att.name} น็อค ${v.name}`);
   } else {
     feed(`💀 ${v.name} ล้มลง`);
   }
 }
 function respawn(p, now) {
-  const h = (byKind.hosp || [])[0];
+  const hs = byKind.hosp || [];
+  const h = hs.length ? nearestOf(hs, p.x, p.y) : null;
   const sp = h ? { x: h.x + h.w / 2 + (Math.random() - 0.5) * 120, y: h.y + h.h + 30 } : spawnPoint();
   p.x = sp.x; p.y = sp.y; p.hp = p.maxhp; p.dead = false; p.wantedUntil = 0; p.stars = 0;
   toast(p, '🏥 คุณตื่นขึ้นที่โรงพยาบาล');
@@ -744,9 +972,49 @@ function tpTo(p, x, y) {
   p.x = r.x; p.y = r.y; p.kx = p.ky = 0;
 }
 
-/* ---- แอดมิน ---- */
+/* ---- ระบบผู้สร้าง (แอดมิน) ---- */
+function resetCity(by) {
+  for (const car of npcCars) { mvPlace(car, Math.floor(Math.random() * 4), randLine(), randAlong(), 22); car.ang = car.hd * Math.PI / 2; car.speed = 0; }
+  for (const pd of peds) { mvPlace(pd, Math.floor(Math.random() * 4), randLine(), randAlong(), 50); pd.hp = 30; pd.dead = false; }
+  for (const car of cars) if (car.active && !car.npc && !car.owner && !car.driver && car.home) { car.x = car.home.x; car.y = car.home.y; car.ang = car.home.ang; car.speed = 0; }
+  const now = Date.now();
+  for (const q of players.values()) { q.stars = 0; q.wantedUntil = 0; q.jailUntil = 0; q.fishing = 0; if (q.dead) q.respawnAt = now; }
+  broadcast({ t: 'announce', m: '♻️ เมืองถูกรีเซ็ตใหม่ (NPC / รถ / ค่าหัว / คุก)', n: by.name });
+  console.log(`[admin] ${by.name} รีเซ็ตเมือง`);
+}
+let restartTimer = null;
+/** รีเซ็ตเซิร์ฟเวอร์: นับถอยหลังตามเวลาที่ตั้ง แล้วรีเซ็ตเมือง + เตะทุกคนพร้อมข้อความ "รีเซ็ต" */
+function scheduleRestart(by, secs, wipe) {
+  if (!(secs >= 5 && secs <= 3600)) return toast(by, 'ตั้งเวลา 5-3600 วินาที');
+  if (restartTimer) clearInterval(restartTimer);
+  let left = secs;
+  const say = () => {
+    const txt = left >= 60 ? `${Math.floor(left / 60)} นาที ${left % 60 ? (left % 60) + ' วินาที' : ''}` : `${left} วินาที`;
+    broadcast({ t: 'announce', m: `♻️ เซิร์ฟเวอร์จะรีเซ็ตใน ${txt}${wipe ? ' (ล้างข้อมูลผู้เล่นทั้งหมด)' : ''}`, n: by.name });
+  };
+  say();
+  console.log(`[admin] ${by.name} ตั้งรีเซ็ตเซิร์ฟเวอร์ใน ${secs} วินาที${wipe ? ' + ล้างเซฟ' : ''}`);
+  restartTimer = setInterval(() => {
+    left--;
+    if (left > 0) { if (left <= 10 || left === 30 || left === 60 || (left % 300 === 0)) say(); return; }
+    clearInterval(restartTimer); restartTimer = null;
+    resetCity(by);
+    if (wipe) { saves = {}; for (const q of players.values()) q.noSave = true; }
+    dirty = true; flushSaves();
+    for (const q of [...players.values()]) refuse(q.c, '♻️ รีเซ็ต — เซิร์ฟเวอร์ถูกรีเซ็ตแล้ว กรุณาเข้าเกมใหม่อีกครั้ง');
+  }, 1000);
+}
 function doAdmin(p, m) {
   if (!p.admin) return; // ตรวจฝั่งเซิร์ฟเวอร์ทุกครั้ง
+  const now = Date.now();
+  if (m.a === 'creator') {   // ปลดล็อกระบบผู้สร้าง: ต้องใส่รหัสก่อน
+    const r = authPw(p.c.ip, String(m.pw || ''), 'creator');
+    if (r === 'locked') return toast(p, '🔒 ใส่รหัสผิดหลายครั้ง ถูกล็อกชั่วคราว');
+    if (r === 'bad') return toast(p, '❌ รหัสผู้สร้างไม่ถูกต้อง');
+    p.creator = true;
+    return toast(p, '🛠️ ปลดล็อกระบบผู้สร้างแล้ว');
+  }
+  if (['ann', 'kick', 'spawn', 'reset', 'resetcancel'].includes(m.a) && !p.creator) return toast(p, '🔒 ต้องปลดล็อกระบบผู้สร้างด้วยรหัสก่อน');
   switch (m.a) {
     case 'tog': {
       if (!['fast', 'god', 'inf'].includes(m.k)) return;
@@ -761,7 +1029,7 @@ function doAdmin(p, m) {
       if (!t || !(amt > 0) || amt > 1e9) return toast(p, 'ข้อมูลไม่ถูกต้อง (เงิน 1 - 1,000,000,000)');
       t.money += amt;
       toast(p, `🎁 เสกเงิน $${amt.toLocaleString()} ให้ ${t.name} แล้ว`);
-      if (t !== p) toast(t, `🎁 แอดมินให้เงินคุณ $${amt.toLocaleString()}`);
+      if (t !== p) toast(t, `🎁 ผู้สร้างให้เงินคุณ $${amt.toLocaleString()}`);
       break;
     }
     case 'ann': {
@@ -781,23 +1049,53 @@ function doAdmin(p, m) {
     case 'kick': {
       const t = players.get(+m.id);
       if (!t || t === p || t.admin) return toast(p, 'เตะไม่ได้');
-      feed(`🥾 ${t.name} ถูกแอดมินเตะออกจากเซิร์ฟเวอร์`);
-      refuse(t.c, 'คุณถูกแอดมินเตะออกจากเซิร์ฟเวอร์');
+      feed(`🥾 ${t.name} ถูกผู้สร้างเตะออกจากเซิร์ฟเวอร์`);
+      refuse(t.c, 'คุณถูกผู้สร้างเตะออกจากเซิร์ฟเวอร์');
       break;
     }
-    case 'pw': {
-      const pw = String(m.pw || '');
-      if (pw.length < 6 || pw.length > 64) return toast(p, 'รหัสต้องยาว 6-64 ตัวอักษร');
-      setAdminPw(pw, true);
-      let kicked = 0;
-      for (const q of players.values()) {
-        if (q !== p && q.admin) { q.admin = false; q.fast = q.god = q.inf = false; kicked++; toast(q, '🔒 รหัสแอดมินถูกเปลี่ยน สิทธิ์แอดมินของคุณสิ้นสุดแล้ว'); }
+    case 'spawn': {   // เสกได้ทุกอย่าง
+      const t = m.id ? players.get(+m.id) : p;
+      if (!t) return;
+      const v = String(m.v || '');
+      switch (m.k) {
+        case 'weapon':
+          if (v === 'all') for (const k of WORDER) t.weapons.add(k);
+          else if (WEAPONS[v]) { t.weapons.add(v); t.weapon = v; } else return;
+          t.ammo = MAX_AMMO; break;
+        case 'car': {
+          const def = CAR_MODELS[v]; if (!def) return;
+          t.carModel = v; t.carColor = Number.isInteger(m.color) ? clamp(m.color, 0, 7) : 0;
+          const r = collide(t.x + 70, t.y, 24); placeCar(t, { x: r.x, y: r.y });
+          break;
+        }
+        case 'heal': t.hp = t.maxhp; t.hunger = 100; break;
+        case 'ammo': t.ammo = MAX_AMMO; break;
+        case 'fish': t.inv = t.inv.map(n => n + 5); break;
+        case 'unlock': t.unl.add('thief'); break;
+        case 'clear': t.stars = 0; t.wantedUntil = 0; t.jailUntil = 0; break;
+        case 'jail': jailPlayer(t, null, now); break;
+        case 'money': { const amt = Math.floor(+m.amt); if (!(amt > 0) || amt > 1e9) return; t.money += amt; break; }
+        case 'career': if (!CAREERS[v]) return; setCareer(t, v); break;
+        default: return;
       }
-      if (kicked) sendRoster();
-      toast(p, '🔑 เปลี่ยนรหัสแอดมินแล้ว (ใช้รหัสใหม่ครั้งหน้า)');
-      console.log(`[admin] ${p.name} เปลี่ยนรหัสแอดมิน`);
+      toast(p, '✨ เสกสำเร็จ');
+      if (t !== p) toast(t, '✨ ผู้สร้างเสกของให้คุณ');
       break;
     }
+    case 'tpk': {   // วาร์ปไปสถานที่
+      const list = byKind[String(m.v || '')];
+      if (!list || !list.length) return;
+      const b = list[(m.i | 0) % list.length];
+      tpTo(p, b.x + b.w / 2, String(m.v) === 'farm' ? b.y + b.h / 2 : b.y + b.h + 30);
+      break;
+    }
+    case 'reset':
+      if (m.mode === 'city') resetCity(p);       // รีเซ็ตเมืองทันที ไม่เตะใคร
+      else scheduleRestart(p, Math.floor(+m.secs), !!m.wipe);
+      break;
+    case 'resetcancel':
+      if (restartTimer) { clearInterval(restartTimer); restartTimer = null; broadcast({ t: 'announce', m: '✅ ยกเลิกการรีเซ็ตเซิร์ฟเวอร์แล้ว', n: p.name }); }
+      break;
   }
 }
 
@@ -828,7 +1126,7 @@ function toggleCar(p) {
 function updateCar(car, dt) {
   const d = car.driver ? players.get(car.driver) : null;
   const boost = d && d.fast ? 1.5 : 1;
-  const MAXS = car.max * boost, ACC = car.acc * boost, BRAKE = 900, FRIC = 260;
+  const MAXS = car.max * boost, ACC = car.acc * boost, BRAKE = 1100, FRIC = 320;
   let th = 0, st = 0;
   if (d && !d.dead) { th = d.in.th; st = d.in.st; }
   if (th !== 0) {
@@ -838,17 +1136,18 @@ function updateCar(car, dt) {
   } else {
     car.speed = approach(car.speed, 0, FRIC * dt);
   }
-  car.ang += st * 2.4 * dt * clamp(car.speed / 180, -1, 1);
+  // ขับง่าย: เลี้ยวได้ตั้งแต่ความเร็วต่ำ ยิ่งเร็วยิ่งเลี้ยวนุ่มขึ้น
+  car.ang += st * (2.9 - 1.3 * Math.min(1, Math.abs(car.speed) / Math.max(car.max, 1))) * dt * clamp(car.speed / 110, -1, 1);
   if (Math.abs(car.speed) > 0.5) {
     const r = collide(car.x + Math.cos(car.ang) * car.speed * dt, car.y + Math.sin(car.ang) * car.speed * dt, 22);
     car.x = r.x; car.y = r.y;
-    if (r.hit && Math.abs(car.speed) > 20) car.speed *= -0.3;
+    if (r.hit && Math.abs(car.speed) > 20) car.speed *= 0.55;
   }
   if (d) {
     car.idle = 0;
     if (d.career === 'taxi') {
       d.fareAcc += Math.abs(car.speed) * dt;
-      if (d.fareAcc >= FARE_DIST) { const k = Math.floor(d.fareAcc / FARE_DIST); d.money += k; d.fareAcc -= k * FARE_DIST; }
+      if (d.fareAcc >= FARE_DIST) { const k = Math.floor(d.fareAcc / FARE_DIST); earn(d, k); d.fareAcc -= k * FARE_DIST; }
     }
   } else {
     car.idle += dt;
@@ -862,26 +1161,56 @@ function updateCar(car, dt) {
 
 function updatePlayer(p, dt, now) {
   if (p.dead) { if (now >= p.respawnAt) respawn(p, now); return; }
+  if (p.jailUntil > 0 && now >= p.jailUntil) {
+    p.jailUntil = 0;
+    if (jailBlock) { p.x = jailBlock.x + jailBlock.w / 2; p.y = jailBlock.y + jailBlock.h + 34; }
+    p.protectUntil = now + 2000;
+    toast(p, '🔓 คุณถูกปล่อยตัวแล้ว ประพฤติตัวดีๆ นะ');
+  }
+  const jailed = p.jailUntil > 0;
+  let moving = false;
   if (p.car) {
     const car = cars[p.car - 1];
     p.x = car.x; p.y = car.y; p.ang = car.ang;
   } else {
     let mx = p.in.mx, my = p.in.my;
     const l = Math.hypot(mx, my);
+    moving = l > 0.05;
     if (l > 1) { mx /= l; my /= l; }
     const spd = 175 * (p.fast ? 2.4 : 1);
     const nx = p.x + (mx * spd + p.kx) * dt;
     const ny = p.y + (my * spd + p.ky) * dt;
     const k = Math.exp(-7 * dt);
     p.kx *= k; p.ky *= k;
-    const r = collide(nx, ny, 14);
-    p.x = r.x; p.y = r.y;
+    if (jailed && jailBlock) {   // ในคุก: เดินได้เฉพาะในห้องขัง
+      p.x = clamp(nx, jailBlock.x + 22, jailBlock.x + jailBlock.w - 22);
+      p.y = clamp(ny, jailBlock.y + 22, jailBlock.y + jailBlock.h - 22);
+    } else {
+      const r = collide(nx, ny, 14);
+      p.x = r.x; p.y = r.y;
+    }
   }
+  p.work = false;
   // รายได้ประจำ
   const cr = CAREERS[p.career];
-  if (cr.salary > 0) {
+  if (cr.salary > 0 && !jailed) {
     p.payAcc += dt;
-    if (p.payAcc >= 10) { p.payAcc -= 10; p.money += cr.salary; }
+    if (p.payAcc >= 10) { p.payAcc -= 10; earn(p, cr.salary); }
+  }
+  // นักเรียน: อยู่ในโรงเรียนได้ค่าทุนเพิ่ม
+  if (p.career === 'student' && !p.car && !jailed && nearBlock(p, byKind.school || [], 80)) {
+    p.work = true; p.studyAcc += dt;
+    if (p.studyAcc >= 10) { p.studyAcc -= 10; earn(p, 6); progOf(p).n++; }
+  }
+  // จุดยืนฟาม (เซฟโซน): ยืนนิ่งๆ ได้เงินเรื่อยๆ
+  if (!p.car && !jailed && !moving && inSafe(p)) {
+    p.work = true; p.farmAcc += dt;
+    if (p.farmAcc >= 6) { p.farmAcc -= 6; earn(p, 5); }
+  }
+  // ตกปลา: ขยับตัว/ขึ้นรถ = เก็บเบ็ด
+  if (p.fishing) {
+    if (moving || p.car || jailed) { p.fishing = 0; toast(p, '🎣 เก็บเบ็ดแล้ว'); }
+    else { p.work = true; if (now >= p.fishing) catchFish(p, now); }
   }
   // หิว: ค่อยๆ ลด หิวจัดเลือดค่อยๆ ลด (แต่ไม่ถึงตาย)
   if (p.god) { p.hp = p.maxhp; p.hunger = 100; }
@@ -898,17 +1227,21 @@ function updatePlayer(p, dt, now) {
       if (q === p || q.dead || q.hp >= q.maxhp) continue;
       if (Math.hypot(q.x - p.x, q.y - p.y) > 130) continue;
       const heal = Math.min(4 * dt, q.maxhp - q.hp);
-      q.hp += heal; p.money += heal * 0.25;
+      q.hp += heal; earn(p, heal * 0.25); p.work = true;
     }
   }
 }
 
 function buildMe(p, now) {
+  const g = progOf(p), lv = lvlOf(g);
   return JSON.stringify({
     t: 'me', hp: Math.ceil(p.hp), mhp: p.maxhp, money: Math.floor(p.money), bank: Math.floor(p.bank),
-    hunger: Math.ceil(p.hunger), ammo: p.ammo, gun: canShoot(p), wp: p.weapon, own: [...p.weapons], carm: p.carModel, career: p.career,
+    hunger: Math.ceil(p.hunger), ammo: p.ammo, gun: true, wp: p.weapon, own: [...p.weapons], carm: p.carModel, career: p.career,
     wanted: p.wantedUntil > now, stars: p.wantedUntil > now ? p.stars : 0, dead: p.dead,
     adm: p.admin, fast: p.fast, god: p.god, inf: p.inf,
+    unl: [...p.unl], look: p.look, inv: p.inv, cr: !!p.creator,
+    lvl: lv, xp: Math.floor(g.xp), xp0: 25 * (lv - 1) * (lv - 1), xpn: 25 * lv * lv, earned: Math.floor(g.earned), jobs: g.n,
+    jail: p.jailUntil > now ? Math.ceil((p.jailUntil - now) / 1000) : 0, safe: inSafe(p), fishing: !!p.fishing,
   });
 }
 
@@ -970,7 +1303,7 @@ function tick() {
   // snapshot
   const ps = [];
   for (const p of players.values()) {
-    const fl = (now - p.punchT < 220 ? 1 : 0) | (p.wantedUntil > now ? 2 : 0) | (now - p.hurtT < 200 ? 4 : 0) | (now < p.protectUntil ? 8 : 0);
+    const fl = (now - p.punchT < 220 ? 1 : 0) | (p.wantedUntil > now ? 2 : 0) | (now - p.hurtT < 200 ? 4 : 0) | (now < p.protectUntil ? 8 : 0) | (p.fishing ? 16 : 0) | (p.work ? 32 : 0) | (p.jailUntil > 0 ? 64 : 0);
     ps.push([p.id, Math.round(p.x), Math.round(p.y), Math.round(p.ang * 100), Math.ceil(p.hp), p.car, fl]);
   }
   const cs = cars.filter(c => c.active).map(c => [c.id, Math.round(c.x), Math.round(c.y), Math.round(c.ang * 100), c.driver, c.color]);
@@ -987,16 +1320,13 @@ function tick() {
 setInterval(tick, TICK_MS);
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`STREET CITY ONLINE v2 พร้อมแล้ว → http://localhost:${PORT}  (จำกัด ${MAX_PLAYERS} คน)`);
-  if (generatedPw) {
-    console.log('============================================================');
-    console.log(` รหัสแอดมิน (สุ่มให้ครั้งแรก): ${generatedPw}`);
-    console.log(' แนะนำให้ตั้งรหัสเอง: ตั้งตัวแปร ADMIN_PASSWORD หรือเปลี่ยนในแผงแอดมิน');
-    console.log('============================================================');
-  } else {
-    console.log('แอดมิน: ใช้รหัสจาก admin.json หรือตัวแปร ADMIN_PASSWORD');
-  }
+  console.log(`${CITY_NAME} พร้อมแล้ว → http://localhost:${PORT}  (จำกัด ${MAX_PLAYERS} คน)`);
+  console.log(`รหัสแอดมิน: ${CRED.admin.env ? 'จาก ADMIN_PASSWORD' : 'ค่าเริ่มต้น nampan'} · รหัสระบบผู้สร้าง: ${CRED.creator.env ? 'จาก CREATOR_PASSWORD' : 'ค่าเริ่มต้น nampan'}`);
 });
+// กัน Render ฟรีหลับ: ยิงหาตัวเองทุก 8 นาที (เซิร์ฟเวอร์เปิดตลอด ยกเว้นผู้สร้างสั่งรีเซ็ต)
+if (process.env.RENDER_EXTERNAL_URL) {
+  setInterval(() => { fetch(process.env.RENDER_EXTERNAL_URL + '/status').catch(() => {}); }, 8 * 60 * 1000);
+}
 function shutdown() { for (const p of players.values()) saveOne(p); flushSaves(); process.exit(0); }
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);

@@ -1,7 +1,7 @@
 {
   "name": "street-city-online",
   "version": "1.0.0",
-  "description": "เกมเมืองออนไลน์ มัลติเพลเยอร์ สูงสุด 50 คน (ไม่ต้องติดตั้งแพ็กเกจเพิ่ม)",
+  "description": "Np-city RP เกมเมืองออนไลน์ มัลติเพลเยอร์ สูงสุด 50 คน (ไม่ต้องติดตั้งแพ็กเกจเพิ่ม)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
