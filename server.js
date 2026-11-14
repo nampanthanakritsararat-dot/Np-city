@@ -15,7 +15,7 @@ const PORT = +process.env.PORT || 3000;
 const MAX_PLAYERS = 50;
 const TICK_MS = 50; // 20 ครั้ง/วินาที
 const CITY_NAME = 'Np-city RP';
-const VERSION = 'v3.4';
+const VERSION = 'v3.5';
 const DATA_FILE = path.join(__dirname, 'data.json');
 
 /* ------------------------------ บันทึกเงิน/อาชีพ ------------------------------ */
@@ -1350,9 +1350,9 @@ function updatePlayer(p, dt, now) {
   if (p.dead) { if (now >= p.respawnAt) respawn(p, now); return; }
   if (p.jailUntil > 0 && now >= p.jailUntil) {
     p.jailUntil = 0;
-    if (jailBlock) { p.x = jailBlock.x + jailBlock.w / 2; p.y = jailBlock.y + jailBlock.h + 34; }
+    { const pb = (byKind.police || [])[0]; if (pb) { p.x = pb.x + pb.w / 2 + (Math.random() - 0.5) * 80; p.y = pb.y + pb.h * 0.72; p.kx = p.ky = 0; } else if (jailBlock) { p.x = jailBlock.x + jailBlock.w / 2; p.y = jailBlock.y + jailBlock.h + 34; } }
     p.protectUntil = now + 2000;
-    toast(p, '🔓 คุณถูกปล่อยตัวแล้ว ประพฤติตัวดีๆ นะ');
+    toast(p, '🔓 คุณถูกปล่อยตัวแล้ว ประพฤติตัวดีๆ นะ (วาร์ปมาหน้าสถานีตำรวจ)');
   }
   const jailed = p.jailUntil > 0;
   let moving = false;

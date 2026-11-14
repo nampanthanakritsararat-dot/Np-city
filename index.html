@@ -106,6 +106,16 @@ input.txt:focus{border-color:var(--acc)}
 #bGun{right:104px;bottom:12px;width:64px;height:64px;background:#ffb70055!important}
 #bCar{right:6px;bottom:104px;width:64px;height:64px}
 #bAct{right:78px;bottom:96px;width:64px;height:64px}
+#drive button{position:absolute;pointer-events:auto;touch-action:none;border-radius:20px;border:2px solid #ffffff66;background:#ffffff26;color:#fff;font-size:34px;font-weight:900;display:flex;flex-direction:column;align-items:center;justify-content:center;backdrop-filter:blur(3px);user-select:none}
+#drive button small{font-size:12px;font-weight:700;margin-top:-4px}
+#drive button.on{background:#ffd27acc;color:#111}
+#dL,#dR{bottom:max(40px,env(safe-area-inset-bottom));width:84px;height:100px}
+#dL{left:max(14px,env(safe-area-inset-left))}#dR{left:calc(max(14px,env(safe-area-inset-left)) + 94px)}
+#dU,#dD{right:max(14px,env(safe-area-inset-right));width:96px;height:84px}
+#dU{bottom:calc(max(40px,env(safe-area-inset-bottom)) + 96px)}#dD{bottom:max(40px,env(safe-area-inset-bottom))}
+body.driving #stick,body.driving #bPunch,body.driving #bGun,body.driving #bWpn,body.driving #bAct{display:none!important}
+body.driving #bCar{right:max(120px,env(safe-area-inset-right));bottom:calc(max(40px,env(safe-area-inset-bottom)) + 96px);width:60px;height:60px}
+body.driving #hotbar{display:none}
 #look{position:absolute;right:0;top:0;bottom:0;width:62%;z-index:4;touch-action:none}
 #cross{position:absolute;left:50%;top:50%;width:22px;height:22px;margin:-11px 0 0 -11px;pointer-events:none;z-index:3}
 #cross:before,#cross:after{content:"";position:absolute;background:#fff;box-shadow:0 0 3px #000}
@@ -313,6 +323,10 @@ body.mob #chatlog{bottom:176px}
   <div id="look" hidden></div>
   <div id="touch" hidden>
     <div id="stick"><div id="knob"></div></div>
+    <div id="drive" hidden>
+      <button id="dL">◀</button><button id="dR">▶</button>
+      <button id="dU">▲<small>เร่ง</small></button><button id="dD">▼<small>ถอย</small></button>
+    </div>
     <div id="btns">
       <button id="bPunch">👊</button>
       <button id="bGun" hidden>🔫</button>
@@ -848,7 +862,7 @@ function updateHud() {
   const hasGun = me.own.some(isGun), gunEq = isGun(me.wp);
   $('#ammoTxt').hidden = !hasGun;
   $('#ammoTxt').textContent = '🔫 ' + (me.inf ? '∞' : me.ammo);
-  $('#bGun').hidden = !gunEq || me.jail > 0;
+    $('#bGun').hidden = !gunEq || me.jail > 0;
   $('#bWpn').hidden = platform !== 'mobile' || me.own.length < 2;
   $('#cross').hidden = !(gunEq && view === '3d');
   $('#wpnTxt').textContent = '🎒 ' + wname(me.wp);
@@ -1183,6 +1197,12 @@ const hold = (el, on, off) => {
 hold($('#bPunch'), () => { punchHeld = true; }, () => { punchHeld = false; });
 hold($('#bGun'), () => { shootHeld = true; }, () => { shootHeld = false; });
 hold($('#bCar'), () => send({ t: 'e' }));
+const dv = { L: 0, R: 0, U: 0, D: 0 };
+for (const k of ['L', 'R', 'U', 'D']) {
+  const el = $('#d' + k), off = () => { dv[k] = 0; el.classList.remove('on'); };
+  hold(el, () => { dv[k] = 1; el.classList.add('on'); if (navigator.vibrate) try { navigator.vibrate(8); } catch (e) {} }, off);
+  el.addEventListener('lostpointercapture', off);
+}
 hold($('#bAct'), () => act());
 hold($('#bWpn'), () => cycleWeapon());
 $('#bView').onclick = () => toggleView();
@@ -1228,7 +1248,8 @@ function inputState() {
     const l = Math.hypot(mx, my); if (l > 1) { mx /= l; my /= l; }
     ang = (platform === 'mobile' && l > 0.25) ? Math.atan2(my, mx) : camYaw;
     lastAng = ang;
-  } else if (stick.active) {
+  } else if (inCar && (dv.L || dv.R || dv.U || dv.D)) { st = dv.R - dv.L; th = dv.U - dv.D; }
+  else if (stick.active) {
     if (inCar) { st = stick.x; th = -stick.y; }
     else { mx = stick.x; my = stick.y; if (Math.hypot(mx, my) > 0.25) ang = Math.atan2(my, mx); }
   } else if (inCar) { st = kx; th = -ky; }
@@ -1244,6 +1265,7 @@ function inputState() {
 let lastSent = '', lastSentAt = 0;
 function startLoops() {
   setInterval(() => {
+    { const dr = platform === 'mobile' && !!(myP() && myP().car); if (dr !== document.body.classList.contains('driving')) { document.body.classList.toggle('driving', dr); $('#drive').hidden = !dr; if (!dr) dv.L = dv.R = dv.U = dv.D = 0; } }
     const s = isTyping() ? { t: 'in', mx: 0, my: 0, th: 0, st: 0 } : inputState();
     curIn = s;
     const j = JSON.stringify(s), now = performance.now();
@@ -1336,10 +1358,10 @@ function predictLocal(e, dt) {
   let mx = curIn.mx || 0, my = curIn.my || 0; const l = Math.hypot(mx, my); if (l > 1) { mx /= l; my /= l; }
   const r = collideC(pred.x + mx * spd * dt, pred.y + my * spd * dt, 14);
   pred.x = r.x; pred.y = r.y;
-  const L = Math.min(0.3, (pingMs / 2 + 45) / 1000);
+  const L = Math.min(0.3, (pingMs / 2 + 50) / 1000), mv = Math.hypot(mx, my) > 0.05;
   const ex = e.x + mx * spd * L - pred.x, ey = e.y + my * spd * L - pred.y, dist = Math.hypot(ex, ey);
-  if (dist > 160) { pred.x = e.x; pred.y = e.y; }
-  else { const k = Math.min(1, dt * (dist > 40 ? 10 : 4)); pred.x += ex * k; pred.y += ey * k; }
+  if (dist > 220) { pred.x = e.x; pred.y = e.y; }
+  else if (dist > 14 + (mv ? spd * 0.12 : 0)) { const k = Math.min(1, dt * (dist > 60 ? 8 : 2.2)); pred.x += ex * k; pred.y += ey * k; }
   e.rx = pred.x; e.ry = pred.y;
 }
 
@@ -1353,7 +1375,7 @@ function hash(n) { n = Math.sin(n * 127.1) * 43758.5453; return n - Math.floor(n
 function frame(t) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (t - lastT) / 1000 || 0.016); lastT = t;
-  const k = Math.min(1, dt * 16);
+  const k = 1 - Math.exp(-dt * 11);
   const step = e => {
     if (Math.abs(e.x - e.rx) > 300 || Math.abs(e.y - e.ry) > 300) { e.rx = e.x; e.ry = e.y; e.rang = e.ang; }
     else { e.rx += (e.x - e.rx) * k; e.ry += (e.y - e.ry) * k; e.rang = lerpAng(e.rang, e.ang, k); }
@@ -1645,7 +1667,8 @@ function player3(e, d, t) {
   const info = names.get(e.id) || { n: '…', c: 'worker', a: false }, cr = CAREERS[info.c] || CAREERS.worker, dead = e.hp <= 0;
   const shC = hex2(CLOTH_COLS[info.sh | 0] || cr.c), paC = hex2(CLOTH_COLS[info.pa | 0] || '#2b2d42'), skC = hex2(SKIN_COLS[info.sk | 0] || '#f0c9a0');
   const mv = Math.hypot(e.rx - (e.px === undefined ? e.rx : e.px), e.ry - (e.py === undefined ? e.ry : e.py));
-  e.px = e.rx; e.py = e.ry; e.walk = (e.walk || 0) + mv * 0.09;
+  e.px = e.rx; e.py = e.ry; e.walk = (e.walk || 0) + mv * 0.075;
+  { const tn = performance.now(), dtt = Math.max(0.004, Math.min(0.1, (tn - (e.at || tn)) / 1000)); e.at = tn; const sp = mv / dtt; e.amp = (e.amp || 0) + ((sp > 25 ? Math.min(1, sp / 120 + 0.35) : 0) - (e.amp || 0)) * Math.min(1, dtt * 9); }
   const p0 = projPt(e.rx, e.ry, 0); if (!p0) return;
   const s = p0.s, L = SKY.L, f = fogF(d), tint = c => rgb(mixc([c[0] * L, c[1] * L, c[2] * L], SKY.hor, f));
   const flat = Math.max(0.18, Math.sin(camPitch));
@@ -1656,23 +1679,50 @@ function player3(e, d, t) {
       const ring = col => { ctx.strokeStyle = col; ctx.lineWidth = 3 * s; ctx.beginPath(); ctx.ellipse(p0.sx, p0.sy, 22 * s, 22 * s * flat, 0, 0, 7); ctx.stroke(); };
       if (e.fl & 2) ring(Math.floor(t / 200) % 2 ? '#ff3b3b' : '#3b8bff');
       if (e.fl & 8) ring('rgba(255,255,255,.6)');
-      const sw = mv > 0.4 ? Math.sin(e.walk) * 5 * s : 0;
-      ctx.fillStyle = tint(paC);
-      ctx.fillRect(p0.sx - 8 * s + sw, p0.sy - 14 * s, 6.5 * s, 14 * s); ctx.fillRect(p0.sx + 1.5 * s - sw, p0.sy - 14 * s, 6.5 * s, 14 * s);
-      ctx.fillStyle = (e.fl & 4) ? '#ff5555' : tint(shC); rr(p0.sx - 10 * s, p0.sy - 33 * s, 20 * s, 21 * s, 5 * s); ctx.fill();
-      ctx.fillStyle = tint(skC); ctx.beginPath(); ctx.arc(p0.sx, p0.sy - 40 * s, 7.5 * s, 0, 7); ctx.fill();
-      if (info.c === 'police') { ctx.fillStyle = tint([30, 50, 120]); ctx.fillRect(p0.sx - 8.5 * s, p0.sy - 49 * s, 17 * s, 5 * s); }
-      else if (info.c === 'thief') { ctx.fillStyle = tint([25, 25, 30]); ctx.fillRect(p0.sx - 7.5 * s, p0.sy - 42 * s, 15 * s, 4 * s); }
       const ang = e.id === me.id && platform === 'pc' ? camYaw : e.rang, ca = Math.cos(ang), sa = Math.sin(ang), punching = e.fl & 1;
-      const sh = projPt(e.rx, e.ry, 28), hn = projPt(e.rx + ca * (punching ? 30 : 17), e.ry + sa * (punching ? 30 : 17), 25);
       const mine = e.id === me.id, armed = mine ? isGun(me.wp) : (info.c === 'thief' || info.a), bat = mine && me.wp === 'bat';
-      if (sh && hn) {
-        ctx.lineCap = 'round'; ctx.strokeStyle = tint(skC); ctx.lineWidth = 5 * s;
-        ctx.beginPath(); ctx.moveTo(sh.sx, sh.sy); ctx.lineTo(hn.sx, hn.sy); ctx.stroke();
+      const amp = e.amp || 0, sw = Math.sin(e.walk) * amp, bob = Math.abs(Math.cos(e.walk)) * 1.6 * amp;
+      const P = (f, sd, z) => projPt(e.rx + ca * f - sa * sd, e.ry + sa * f + ca * sd, z + bob);
+      const seg = (p1, p2, w, col) => { if (!p1 || !p2) return; ctx.strokeStyle = col; ctx.lineWidth = w * s; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(p1.sx, p1.sy); ctx.lineTo(p2.sx, p2.sy); ctx.stroke(); };
+      const pants = tint(paC), shirt = (e.fl & 4) ? '#ff5555' : tint(shC), skin = tint(skC), shoe = tint([30, 30, 36]);
+      const hairC = tint([[40, 28, 20], [20, 20, 24], [90, 60, 30], [150, 110, 50], [110, 40, 30]][(e.id * 7) % 5]);
+      // ขา (แกว่งตามทิศที่หัน, ยกเท้าตอนก้าว)
+      const legs = [[-4.5, sw], [4.5, -sw]];
+      for (const [sd, w] of legs) {
+        const hip = P(0, sd, 25), knee = P(w * 5, sd, 13 + Math.max(0, w) * 3), foot = P(w * 9, sd, Math.max(0, w) * 4);
+        seg(hip, knee, 6.5, pants); seg(knee, foot, 6, pants);
+        const toe = P(w * 9 + 3.5, sd, Math.max(0, w) * 4 + 1); seg(foot, toe, 6.5, shoe);
+      }
+      // แขนหลัง (แกว่งสวนขา)
+      const sho = (sd) => P(0, sd, 43);
+      const swingArm = (sd, w) => { const h = P(-w * 7, sd * 1.15, 27 + Math.max(0, -w) * 2); seg(sho(sd), h, 4.6, shirt); if (h) { ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(h.sx, h.sy, 2.8 * s, 0, 7); ctx.fill(); } };
+      swingArm(-7, -sw * 0 + sw);
+      // ลำตัว + เข็มขัด + คอ
+      const hipC = P(0, 0, 26), chest = P(0, 0, 42);
+      seg(hipC, chest, 14, shirt);
+      const belt = P(0, 0, 27); seg(P(0, -5.5, 27), P(0, 5.5, 27), 3, tint([35, 30, 28]));
+      seg(chest, P(0, 0, 47), 4.5, skin);
+      // แขนขวา: ต่อย/ถืออาวุธ หรือแกว่งตามเดิน
+      const shR = sho(7), hn = P(punching ? 30 : (armed || bat ? 20 : 0), 7, punching ? 40 : (armed || bat ? 36 : 27));
+      if (punching || armed || bat) {
+        seg(shR, hn, 4.6, shirt); if (hn) { ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(hn.sx, hn.sy, 3 * s, 0, 7); ctx.fill(); }
         if (armed || bat) {
-          const tip = projPt(e.rx + ca * (bat ? 44 : 34), e.ry + sa * (bat ? 44 : 34), bat ? 34 : 25);
-          if (tip) { ctx.strokeStyle = bat ? tint([150, 100, 55]) : '#22252b'; ctx.lineWidth = (bat ? 5 : 4) * s; ctx.beginPath(); ctx.moveTo(hn.sx, hn.sy); ctx.lineTo(tip.sx, tip.sy); ctx.stroke(); }
+          const tip = P(bat ? 46 : 36, 7, bat ? 44 : 36);
+          if (tip && hn) { ctx.strokeStyle = bat ? tint([150, 100, 55]) : '#22252b'; ctx.lineWidth = (bat ? 5 : 4) * s; ctx.beginPath(); ctx.moveTo(hn.sx, hn.sy); ctx.lineTo(tip.sx, tip.sy); ctx.stroke(); }
         }
+      } else swingArm(7, -sw);
+      // หัว ผม ตา
+      const hd = P(0, 0, 54);
+      if (hd) {
+        ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(hd.sx, hd.sy, 7.5 * s, 0, 7); ctx.fill();
+        const fw = P(6, 0, 54);
+        const front = fw && fw.sy >= hd.sy - 1;   // หน้าหันเข้าหากล้อง
+        ctx.fillStyle = hairC; ctx.beginPath();
+        if (front) ctx.arc(hd.sx, hd.sy - 1 * s, 8 * s, Math.PI * 1.02, Math.PI * 1.98); else ctx.arc(hd.sx, hd.sy, 8 * s, 0, 7);
+        ctx.fill();
+        if (front) { ctx.fillStyle = '#1b1d22'; for (const sd of [-2.8, 2.8]) { const ey = P(6, sd, 54.5); if (ey) { ctx.beginPath(); ctx.arc(ey.sx, ey.sy, 1.1 * s, 0, 7); ctx.fill(); } } }
+        if (info.c === 'police') { ctx.fillStyle = tint([30, 50, 120]); ctx.fillRect(hd.sx - 8.5 * s, hd.sy - 9.5 * s, 17 * s, 5 * s); ctx.fillStyle = tint([20, 30, 80]); ctx.fillRect(hd.sx - 10 * s, hd.sy - 5 * s, 20 * s, 2 * s); }
+        else if (info.c === 'thief') { ctx.fillStyle = tint([25, 25, 30]); ctx.fillRect(hd.sx - 7.5 * s, hd.sy - 2 * s, 15 * s, 4 * s); }
       }
     }
   }
