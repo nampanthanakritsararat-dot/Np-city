@@ -15,6 +15,7 @@ const PORT = +process.env.PORT || 3000;
 const MAX_PLAYERS = 50;
 const TICK_MS = 50; // 20 ครั้ง/วินาที
 const CITY_NAME = 'Np-city RP';
+const VERSION = 'v3.3';
 const DATA_FILE = path.join(__dirname, 'data.json');
 
 /* ------------------------------ บันทึกเงิน/อาชีพ ------------------------------ */
@@ -428,7 +429,7 @@ const server = http.createServer((req, res) => {
     });
   } else if (url === '/status') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ city: CITY_NAME, n: players.size, max: MAX_PLAYERS, names: [...players.values()].map(p => p.name).slice(0, 30) }));
+    res.end(JSON.stringify({ ver: VERSION, city: CITY_NAME, n: players.size, max: MAX_PLAYERS, names: [...players.values()].map(p => p.name).slice(0, 30) }));
   } else {
     res.writeHead(404); res.end('Not found');
   }
@@ -495,7 +496,13 @@ function doJoin(c, m) {
   const token = typeof m.token === 'string' && /^[\w-]{16,64}$/.test(m.token) ? m.token : crypto.randomBytes(12).toString('hex');
   for (const q of players.values()) if (q.token === token) return refuse(c, 'บัญชีนี้กำลังออนไลน์อยู่ในอีกแท็บ');
 
-  let isAdmin = false;
+  let isAdmin = false, isCreator = false;
+  if (typeof m.creator === 'string' && m.creator.length > 0) {
+    const r = authPw(c.ip, m.creator, 'creator');
+    if (r === 'locked') return refuse(c, 'ใส่รหัสผิดหลายครั้ง ถูกล็อกชั่วคราว ลองใหม่ภายหลัง');
+    if (r === 'bad') return refuse(c, 'รหัสระบบผู้สร้างไม่ถูกต้อง');
+    isCreator = true; isAdmin = true;   // ผู้สร้างใช้แผงแอดมินได้ด้วย
+  }
   if (typeof m.admin === 'string' && m.admin.length > 0) {
     const r = authPw(c.ip, m.admin);
     if (r === 'locked') return refuse(c, 'ใส่รหัสแอดมินผิดหลายครั้ง ถูกล็อกชั่วคราว ลองใหม่ภายหลัง');
@@ -533,7 +540,7 @@ function doJoin(c, m) {
     dead: false, respawnAt: 0, protectUntil: now + 3000, wantedUntil: 0,
     lastPunch: 0, punchT: 0, lastShot: 0, hurtT: 0, lastHurt: 0, lastCarHit: 0, lastChat: 0,
     payAcc: 0, fareAcc: 0, lastMe: '',
-    look, inv, unl, prog, jailUntil: 0, fishing: 0, farmAcc: 0, studyAcc: 0, work: false, lastSafeMsg: 0,
+    creator: isCreator, look, inv, unl, prog, jailUntil: 0, fishing: 0, farmAcc: 0, studyAcc: 0, work: false, lastSafeMsg: 0,
   };
   progOf(p);
   c.p = p;
@@ -555,7 +562,7 @@ function doJoin(c, m) {
   });
   sendRoster();
   feed(`➕ ${isAdmin ? '🛠️ ' : ''}${p.name} เข้าเมือง (${players.size}/${MAX_PLAYERS})`);
-  if (isAdmin) console.log(`[admin] ${p.name} เข้าสู่ระบบผู้สร้าง`);
+  if (isAdmin) console.log(`[admin] ${p.name} เข้าสู่ระบบ${isCreator ? 'ผู้สร้าง' : 'แอดมิน'}`);
   saveOne(p);
 }
 function leave(p) {
@@ -1007,14 +1014,7 @@ function scheduleRestart(by, secs, wipe) {
 function doAdmin(p, m) {
   if (!p.admin) return; // ตรวจฝั่งเซิร์ฟเวอร์ทุกครั้ง
   const now = Date.now();
-  if (m.a === 'creator') {   // ปลดล็อกระบบผู้สร้าง: ต้องใส่รหัสก่อน
-    const r = authPw(p.c.ip, String(m.pw || ''), 'creator');
-    if (r === 'locked') return toast(p, '🔒 ใส่รหัสผิดหลายครั้ง ถูกล็อกชั่วคราว');
-    if (r === 'bad') return toast(p, '❌ รหัสผู้สร้างไม่ถูกต้อง');
-    p.creator = true;
-    return toast(p, '🛠️ ปลดล็อกระบบผู้สร้างแล้ว');
-  }
-  if (['ann', 'kick', 'spawn', 'reset', 'resetcancel'].includes(m.a) && !p.creator) return toast(p, '🔒 ต้องปลดล็อกระบบผู้สร้างด้วยรหัสก่อน');
+  if (['ann', 'kick', 'spawn', 'reset', 'resetcancel'].includes(m.a) && !p.creator) return toast(p, '🔒 ต้องเข้าด้วยรหัสระบบผู้สร้างจากหน้าล็อบบี้ก่อน');
   switch (m.a) {
     case 'tog': {
       if (!['fast', 'god', 'inf'].includes(m.k)) return;
