@@ -51,9 +51,9 @@ function setAdminPw(pw, persist) {
     catch (e) { console.error('cannot save admin.json:', e.message); }
   }
 }
-if (process.env.ADMIN_PASSWORD) setAdminPw(String(process.env.ADMIN_PASSWORD), false); // ตัวแปร ADMIN_PASSWORD มาก่อนเสมอ
-else if (!adminCred) {
-  { generatedPw = crypto.randomBytes(9).toString('base64url'); setAdminPw(generatedPw, true); }
+if (!adminCred) {
+  if (process.env.ADMIN_PASSWORD) setAdminPw(String(process.env.ADMIN_PASSWORD), false);
+  else { generatedPw = crypto.randomBytes(9).toString('base64url'); setAdminPw(generatedPw, true); }
 }
 function checkAdminPw(pw) {
   if (typeof pw !== 'string' || pw.length === 0 || pw.length > 64) return false;
