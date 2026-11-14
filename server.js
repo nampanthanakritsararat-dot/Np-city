@@ -15,7 +15,7 @@ const PORT = +process.env.PORT || 3000;
 const MAX_PLAYERS = 50;
 const TICK_MS = 50; // 20 ครั้ง/วินาที
 const CITY_NAME = 'Np-city RP';
-const VERSION = 'v3.3';
+const VERSION = 'v3.4';
 const DATA_FILE = path.join(__dirname, 'data.json');
 
 /* ------------------------------ บันทึกเงิน/อาชีพ ------------------------------ */
@@ -32,11 +32,22 @@ function saveOne(p) {
   saves[p.token] = {
     name: p.name, money: Math.floor(p.money), bank: Math.floor(p.bank), career: p.career,
     weapons: [...p.weapons], car: p.carModel ? { m: p.carModel, c: p.carColor } : null,
-    look: p.look, inv: p.inv, unl: [...p.unl], prog: p.prog, ts: Date.now(),
+    look: p.look, inv: p.inv, unl: [...p.unl], prog: p.prog, bag: p.bag, hb: p.hb, bagCap: p.bagCap, ts: Date.now(),
   };
   dirty = true;
 }
-setInterval(() => { for (const p of players.values()) saveOne(p); flushSaves(); }, 10000);
+/* ------------------------------ แก๊ง (เซฟแยกไฟล์ gangs.json) ------------------------------ */
+const GANG_FILE = path.join(__dirname, 'gangs.json'), GANG_COST = 50000, GANG_MAX = 20;
+let gangs = {};   // gid -> { id, name, owner(token), members:[{m,t(token),n}], nm }
+try { gangs = JSON.parse(fs.readFileSync(GANG_FILE, 'utf8')) || {}; } catch (e) { /* ยังไม่มีแก๊ง */ }
+let gangDirty = false, nextGid = 1 + Math.max(0, ...Object.keys(gangs).map(Number));
+function flushGangs() {
+  if (!gangDirty) return;
+  gangDirty = false;
+  try { fs.writeFileSync(GANG_FILE, JSON.stringify(gangs)); } catch (e) { console.error('gang save failed:', e.message); }
+}
+const gangOfToken = tok => { for (const g of Object.values(gangs)) if (g.members.some(x => x.t === tok)) return g; return null; };
+setInterval(() => { for (const p of players.values()) saveOne(p); flushSaves(); flushGangs(); }, 10000);
 
 /* ------------------------------ รหัสแอดมิน / รหัสผู้สร้าง ------------------------------ */
 const hashPw = (pw, salt) => crypto.scryptSync(pw, salt, 32);
@@ -462,7 +473,7 @@ function cleanText(s, max) {
   return Array.from(String(s || '').replace(/[\u0000-\u001f\u007f]/g, '').trim()).slice(0, max).join('');
 }
 function sendRoster() {
-  broadcast({ t: 'roster', list: [...players.values()].map(p => [p.id, p.name, p.career, p.platform, p.admin ? 1 : 0, p.look[0], p.look[1], p.look[2]]) });
+  broadcast({ t: 'roster', list: [...players.values()].map(p => [p.id, p.name, p.career, p.platform, p.admin ? 1 : 0, p.look[0], p.look[1], p.look[2], p.gid && gangs[p.gid] ? gangs[p.gid].name : '']) });
 }
 const feed = m => broadcast({ t: 'feed', m });
 const toast = (p, m) => send(p, { t: 'toast', m });
@@ -478,6 +489,148 @@ function earn(p, base, bonus = true) {
   const l1 = lvlOf(g);
   if (l1 > l0) toast(p, `⭐ ${CAREERS[p.career].n} เลเวล ${l1}! รายได้เพิ่มขึ้น`);
 }
+/* ---- กระเป๋า (Backpack) ---- */
+const BAG_ITEMS = { snack: 1, drink: 1, medkit: 1, ammo: 1 };   // ของใช้ได้ที่เก็บในกระเป๋า (อาวุธนับเป็นช่องด้วย)
+const BAG_BASE = 20, BAG_STEP = 10, BAG_STEP_COST = 5000, BAG_MAX = 100, HB_SLOTS = 6;
+const bagUsed = p => Object.values(p.bag).reduce((a, b) => a + b, 0) + Math.max(0, p.weapons.size - 1);   // นับเป็นชิ้น
+const ownsItem = (p, id) => (BAG_ITEMS[id] && p.bag[id] > 0) || (WEAPONS[id] && id !== 'fist' && p.weapons.has(id));
+function hbCheck(p) {
+  const seen = new Set();
+  for (let i = 0; i < HB_SLOTS; i++) {
+    const id = p.hb[i];
+    if (!id || seen.has(id) || !ownsItem(p, id)) p.hb[i] = null; else seen.add(id);
+  }
+}
+function hbAuto(p, id) { if (p.hb.includes(id)) return; const i = p.hb.indexOf(null); if (i >= 0) p.hb[i] = id; }
+function bagAdd(p, id, n = 1) {
+  if (!BAG_ITEMS[id]) return false;
+  if (bagUsed(p) + n > p.bagCap) return false;
+  p.bag[id] = (p.bag[id] || 0) + n; hbAuto(p, id);
+  return true;
+}
+function weaponAdd(p, id, force) {
+  if (p.weapons.has(id)) return true;
+  if (!force && bagUsed(p) >= p.bagCap) return false;
+  p.weapons.add(id); hbAuto(p, id);
+  return true;
+}
+function useItem(p, id, now) {
+  if (p.dead || p.jailUntil > now) return;
+  if (id === 'fist') { p.weapon = 'fist'; return; }
+  if (WEAPONS[id]) { if (p.weapons.has(id)) p.weapon = p.weapon === id ? 'fist' : id; return; }
+  if (!BAG_ITEMS[id] || !(p.bag[id] > 0)) return;
+  if (FOOD[id]) {
+    if (p.hunger >= 100) return toast(p, 'อิ่มแล้ว 😋');
+    p.hunger = Math.min(100, p.hunger + FOOD[id]); toast(p, `😋 กิน${ITEMS[id].n}แล้ว`);
+  } else if (id === 'medkit') {
+    if (p.hp >= p.maxhp) return toast(p, 'เลือดเต็มอยู่แล้ว');
+    p.hp = p.maxhp; toast(p, '🩹 ใช้ชุดปฐมพยาบาล เลือดเต็ม!');
+  } else if (id === 'ammo') {
+    if (p.ammo >= MAX_AMMO) return toast(p, 'กระสุนเต็มแล้ว');
+    p.ammo = Math.min(MAX_AMMO, p.ammo + 12); toast(p, '🔫 เติมกระสุน +12 นัด');
+  }
+  p.bag[id]--;
+  if (p.bag[id] <= 0) { delete p.bag[id]; hbCheck(p); }
+}
+function expandBag(p) {
+  if (p.bagCap >= BAG_MAX) return toast(p, '🎒 กระเป๋าขยายสูงสุดแล้ว');
+  if (!p.inf && p.money < BAG_STEP_COST) return toast(p, `เงินไม่พอ 💸 (ขยาย +${BAG_STEP} ช่อง ราคา $${BAG_STEP_COST.toLocaleString()})`);
+  if (!p.inf) p.money -= BAG_STEP_COST;
+  p.bagCap += BAG_STEP;
+  toast(p, `🎒 ขยายกระเป๋า +${BAG_STEP} ช่อง (รวม ${p.bagCap} ช่อง)`);
+}
+
+/* ---- แก๊ง ---- */
+function gangMsg(p) {
+  const g = p.gid ? gangs[p.gid] : null;
+  const online = new Set([...players.values()].map(q => q.token));
+  p.invites = p.invites.filter(i => gangs[i.gid] && Date.now() - i.ts < 600000);
+  send(p, { t: 'gang', cost: GANG_COST,
+    g: g ? { id: g.id, name: g.name, owner: g.owner === p.token, max: GANG_MAX, members: g.members.map(x => ({ m: x.m, n: x.n, on: online.has(x.t), o: x.t === g.owner })) } : null,
+    inv: p.invites.map(i => ({ gid: i.gid, g: gangs[i.gid].name, from: i.from })) });
+}
+const gangRefresh = g => { for (const q of players.values()) if (q.gid === g.id) gangMsg(q); };
+function gangRemove(g, tok, why) {
+  g.members = g.members.filter(x => x.t !== tok);
+  for (const q of players.values()) if (q.token === tok) { q.gid = 0; toast(q, why); gangMsg(q); }
+}
+function doGang(p, m) {
+  const g = p.gid ? gangs[p.gid] : null;
+  const isOwner = !!(g && g.owner === p.token);
+  switch (m.a) {
+    case 'create': {
+      if (g) return toast(p, 'คุณอยู่ในแก๊งแล้ว');
+      const name = cleanText(m.name, 16);
+      if (Array.from(name).length < 2) return toast(p, 'ชื่อแก๊งต้องยาว 2-16 ตัวอักษร');
+      if (Object.values(gangs).some(x => x.name.toLowerCase() === name.toLowerCase())) return toast(p, 'ชื่อแก๊งนี้ถูกใช้แล้ว');
+      if (!p.inf && p.money < GANG_COST) return toast(p, `เงินไม่พอ 💸 (สร้างแก๊งราคา $${GANG_COST.toLocaleString()})`);
+      if (!p.inf) p.money -= GANG_COST;
+      const ng = { id: nextGid++, name, owner: p.token, members: [{ m: 1, t: p.token, n: p.name }], nm: 2 };
+      gangs[ng.id] = ng; p.gid = ng.id; p.invites = []; gangDirty = true; flushGangs();
+      feed(`🏴 ${p.name} ก่อตั้งแก๊ง "${name}"`);
+      toast(p, `🏴 สร้างแก๊ง "${name}" สำเร็จ! เชิญสมาชิกได้ที่ปุ่มแก๊ง`);
+      sendRoster(); gangMsg(p);
+      break;
+    }
+    case 'invite': {
+      if (!isOwner) return toast(p, 'เฉพาะเจ้าของแก๊งเท่านั้นที่เชิญได้');
+      const t = players.get(+m.id);
+      if (!t || t === p) return toast(p, 'เลือกผู้เล่นที่ต้องการเชิญก่อน');
+      if (t.gid) return toast(p, `${t.name} อยู่ในแก๊งอื่นแล้ว`);
+      if (g.members.length >= GANG_MAX) return toast(p, `แก๊งเต็มแล้ว (สูงสุด ${GANG_MAX} คน)`);
+      if (t.invites.some(i => i.gid === g.id)) return toast(p, `เชิญ ${t.name} ไปแล้ว รอเขาตอบรับ`);
+      if (t.invites.length >= 5) t.invites.shift();
+      t.invites.push({ gid: g.id, from: p.name, ts: Date.now() });
+      toast(t, `📨 คุณถูกเชิญเข้าแก๊ง "${g.name}" โดย ${p.name} — เปิดปุ่มแก๊ง 🏴 เพื่อตอบรับ`);
+      toast(p, `📨 ส่งคำเชิญให้ ${t.name} แล้ว`);
+      gangMsg(t);
+      break;
+    }
+    case 'accept': {
+      if (g) return toast(p, 'คุณอยู่ในแก๊งแล้ว');
+      const inv = p.invites.find(i => i.gid === (m.gid | 0)), tg = inv && gangs[inv.gid];
+      if (!tg) { gangMsg(p); return toast(p, 'คำเชิญหมดอายุหรือแก๊งถูกยุบแล้ว'); }
+      if (tg.members.length >= GANG_MAX) return toast(p, 'แก๊งนี้เต็มแล้ว');
+      tg.members.push({ m: tg.nm++, t: p.token, n: p.name });
+      p.gid = tg.id; p.invites = []; gangDirty = true; flushGangs();
+      feed(`🏴 ${p.name} เข้าร่วมแก๊ง "${tg.name}"`);
+      sendRoster(); gangRefresh(tg);
+      break;
+    }
+    case 'decline': {
+      p.invites = p.invites.filter(i => i.gid !== (m.gid | 0));
+      gangMsg(p);
+      break;
+    }
+    case 'kick': {
+      if (!isOwner) return toast(p, 'เฉพาะเจ้าของแก๊งเท่านั้นที่เตะได้');
+      const mem = g.members.find(x => x.m === (m.m | 0));
+      if (!mem || mem.t === g.owner) return;
+      gangRemove(g, mem.t, `🥾 คุณถูกเตะออกจากแก๊ง "${g.name}"`);
+      gangDirty = true; flushGangs();
+      feed(`🥾 ${mem.n} ถูกเตะออกจากแก๊ง "${g.name}"`);
+      sendRoster(); gangRefresh(g);
+      break;
+    }
+    case 'leave': {
+      if (!g) return;
+      if (isOwner) return doGang(p, { a: 'disband' });
+      gangRemove(g, p.token, `🚪 คุณออกจากแก๊ง "${g.name}" แล้ว`);
+      gangDirty = true; flushGangs();
+      sendRoster(); gangRefresh(g);
+      break;
+    }
+    case 'disband': {
+      if (!isOwner) return;
+      for (const x of [...g.members]) gangRemove(g, x.t, `💥 แก๊ง "${g.name}" ถูกยุบแล้ว`);
+      delete gangs[g.id]; gangDirty = true; flushGangs();
+      feed(`💥 แก๊ง "${g.name}" ถูกยุบ`);
+      sendRoster();
+      break;
+    }
+  }
+}
+
 function revokeAdmins(except) {
   let n = 0;
   for (const q of players.values()) {
@@ -526,6 +679,10 @@ function doJoin(c, m) {
       if (g && typeof g === 'object') prog[k] = { xp: Math.max(0, +g.xp || 0), earned: Math.max(0, +g.earned || 0), n: Math.max(0, g.n | 0) };
     }
   }
+  const bag = {};
+  if (save && save.bag && typeof save.bag === 'object') for (const [k, v] of Object.entries(save.bag)) if (BAG_ITEMS[k]) bag[k] = clamp(v | 0, 1, 999);
+  const bagCap = save ? clamp(save.bagCap | 0, BAG_BASE, BAG_MAX) : BAG_BASE;
+  const hb = Array.from({ length: HB_SLOTS }, (_, i) => (save && Array.isArray(save.hb) && typeof save.hb[i] === 'string' ? save.hb[i] : null));
   const sp = spawnPoint();
   const now = Date.now();
   const p = {
@@ -540,7 +697,7 @@ function doJoin(c, m) {
     dead: false, respawnAt: 0, protectUntil: now + 3000, wantedUntil: 0,
     lastPunch: 0, punchT: 0, lastShot: 0, hurtT: 0, lastHurt: 0, lastCarHit: 0, lastChat: 0,
     payAcc: 0, fareAcc: 0, lastMe: '',
-    creator: isCreator, look, inv, unl, prog, jailUntil: 0, fishing: 0, farmAcc: 0, studyAcc: 0, work: false, lastSafeMsg: 0,
+    creator: isCreator, bag, hb, bagCap, gid: 0, invites: [], look, inv, unl, prog, jailUntil: 0, fishing: 0, farmAcc: 0, studyAcc: 0, work: false, lastSafeMsg: 0,
   };
   progOf(p);
   c.p = p;
@@ -549,6 +706,9 @@ function doJoin(c, m) {
   if (save && Array.isArray(save.weapons)) for (const k of save.weapons) if (WEAPONS[k]) p.weapons.add(k);
   if (career === 'thief') p.weapons.add('pistol');
   if (isAdmin) for (const k of WORDER) p.weapons.add(k);
+  for (const k of p.weapons) if (k !== 'fist') hbAuto(p, k);
+  hbCheck(p);
+  { const gg = gangOfToken(token); p.gid = gg ? gg.id : 0; if (gg) { const x = gg.members.find(y => y.t === token); if (x) x.n = p.name; gangDirty = true; } }
   p.weapon = p.weapons.has('pistol') ? 'pistol' : 'fist';
   if (p.weapon !== 'fist') p.ammo = 24;
   if (save && save.car && CAR_MODELS[save.car.m]) { p.carModel = save.car.m; p.carColor = (save.car.c | 0) & 7; placeCar(p, nearestOf(byKind.dealer, p.x, p.y)); }
@@ -560,6 +720,7 @@ function doJoin(c, m) {
     you: { x: p.x, y: p.y },
     menus: MENUS,
   });
+  gangMsg(p);
   sendRoster();
   feed(`➕ ${isAdmin ? '🛠️ ' : ''}${p.name} เข้าเมือง (${players.size}/${MAX_PLAYERS})`);
   if (isAdmin) console.log(`[admin] ${p.name} เข้าสู่ระบบ${isCreator ? 'ผู้สร้าง' : 'แอดมิน'}`);
@@ -613,6 +774,17 @@ function onMessage(c, str) {
       break;
     }
     case 'fish': castFish(p, now); break;
+    case 'hb': {   // ใส่/เอาของออกจากช่องใช้งานด้านล่าง
+      const i = m.i | 0;
+      if (i < 0 || i >= HB_SLOTS) return;
+      const id = m.id == null ? null : String(m.id);
+      if (id) { if (!ownsItem(p, id)) return; const k = p.hb.indexOf(id); if (k >= 0) p.hb[k] = null; p.hb[i] = id; }
+      else p.hb[i] = null;
+      break;
+    }
+    case 'use': useItem(p, String(m.id || ''), now); break;
+    case 'bagx': expandBag(p); break;
+    case 'gang': doGang(p, m); break;
     case 'arrest': arrest(p, now); break;
     case 'give': doGive(p, m); break;
     case 'chat': {
@@ -620,6 +792,14 @@ function onMessage(c, str) {
       const text = cleanText(m.m, 100);
       if (!text) return;
       p.lastChat = now;
+      const gm = /^\/g\s+(.+)$/i.exec(text);
+      if (gm) {
+        const g = p.gid ? gangs[p.gid] : null;
+        if (!g) return toast(p, 'คุณยังไม่มีแก๊ง');
+        const o = { t: 'chat', id: p.id, n: `🏴 ${g.name} · ${p.name}`, m: gm[1], a: 0, b: 0 };
+        for (const q of players.values()) if (q.gid === g.id) send(q, o);
+        break;
+      }
       const wm = /^\/w\s+(\S+)\s+(.+)$/i.exec(text);
       if (wm) {
         const t = [...players.values()].find(q => q.name.toLowerCase() === wm[1].toLowerCase());
@@ -732,7 +912,7 @@ function doBuy(p, id, m) {
       const w = WEAPONS[p.weapon];
       if (!w || !w.price || !p.weapons.has(p.weapon)) return toast(p, 'ถืออาวุธที่ขายได้ไว้ก่อน (มือเปล่าขายไม่ได้)');
       const back = Math.floor(w.price * 0.5);
-      p.weapons.delete(p.weapon); p.money += back;
+      p.weapons.delete(p.weapon); hbCheck(p); p.money += back;
       toast(p, `💱 ขาย ${w.n} ได้ $${back}`);
       p.weapon = 'fist';
       return;
@@ -742,6 +922,12 @@ function doBuy(p, id, m) {
   }
   if (!p.inf && p.money < it.price) return toast(p, 'เงินไม่พอ 💸');
 
+  if (BAG_ITEMS[id]) {   // ของใช้ซื้อแล้วเก็บลงกระเป๋า
+    if (!p.inf && p.money < it.price) return toast(p, 'เงินไม่พอ 💸');
+    if (!bagAdd(p, id)) return toast(p, `🎒 กระเป๋าเต็ม! ขยายได้ที่ปุ่มกระเป๋า (+${BAG_STEP} ช่อง $${BAG_STEP_COST.toLocaleString()})`);
+    if (!p.inf) p.money -= it.price;
+    return toast(p, `🎒 ซื้อ ${it.n} เก็บลงกระเป๋าแล้ว (ใช้ได้ที่ช่องด้านล่าง)`);
+  }
   let msg = '';
   if (FOOD[id]) {
     if (p.hunger >= 100) return toast(p, 'อิ่มแล้ว 😋');
@@ -755,7 +941,8 @@ function doBuy(p, id, m) {
     if (p.ammo >= MAX_AMMO) return toast(p, 'กระสุนเต็มแล้ว');
     p.ammo = Math.min(MAX_AMMO, p.ammo + 12); msg = '🔫 ได้กระสุน +12 นัด';
   } else if (WEAPONS[id]) {
-    p.weapons.add(id); p.weapon = id;
+    if (!weaponAdd(p, id, false)) return toast(p, `🎒 กระเป๋าเต็ม! ขยายได้ที่ปุ่มกระเป๋า (+${BAG_STEP} ช่อง $${BAG_STEP_COST.toLocaleString()})`);
+    p.weapon = id;
     if (!WEAPONS[id].melee) p.ammo = Math.max(p.ammo, 12);
     msg = `ซื้อ ${WEAPONS[id].n} แล้ว (ถือไว้ในมือ)`;
   } else return;
@@ -767,7 +954,7 @@ function doBuy(p, id, m) {
 function setCareer(p, k) {
   p.career = k; p.maxhp = CAREERS[k].hp; p.hp = Math.min(p.hp, p.maxhp);
   p.payAcc = 0; p.fareAcc = 0; p.fishing = 0;
-  if (k === 'thief') { p.ammo = Math.max(p.ammo, 12); p.weapons.add('pistol'); }
+  if (k === 'thief') { p.ammo = Math.max(p.ammo, 12); weaponAdd(p, 'pistol', true); }
   const g = progOf(p);
   toast(p, `เปลี่ยนอาชีพเป็น ${CAREERS[k].n} (เลเวล ${lvlOf(g)}) · ความคืบหน้าของอาชีพนี้ถูกเซฟไว้`);
   saveOne(p); sendRoster();
@@ -1006,8 +1193,8 @@ function scheduleRestart(by, secs, wipe) {
     if (left > 0) { if (left <= 10 || left === 30 || left === 60 || (left % 300 === 0)) say(); return; }
     clearInterval(restartTimer); restartTimer = null;
     resetCity(by);
-    if (wipe) { saves = {}; for (const q of players.values()) q.noSave = true; }
-    dirty = true; flushSaves();
+    if (wipe) { saves = {}; gangs = {}; gangDirty = true; for (const q of players.values()) { q.noSave = true; q.gid = 0; } }
+    dirty = true; flushSaves(); flushGangs();
     for (const q of [...players.values()]) refuse(q.c, '♻️ รีเซ็ต — เซิร์ฟเวอร์ถูกรีเซ็ตแล้ว กรุณาเข้าเกมใหม่อีกครั้ง');
   }, 1000);
 }
@@ -1059,8 +1246,8 @@ function doAdmin(p, m) {
       const v = String(m.v || '');
       switch (m.k) {
         case 'weapon':
-          if (v === 'all') for (const k of WORDER) t.weapons.add(k);
-          else if (WEAPONS[v]) { t.weapons.add(v); t.weapon = v; } else return;
+          if (v === 'all') for (const k of WORDER) weaponAdd(t, k, true);
+          else if (WEAPONS[v]) { weaponAdd(t, v, true); t.weapon = v; } else return;
           t.ammo = MAX_AMMO; break;
         case 'car': {
           const def = CAR_MODELS[v]; if (!def) return;
@@ -1240,6 +1427,7 @@ function buildMe(p, now) {
     wanted: p.wantedUntil > now, stars: p.wantedUntil > now ? p.stars : 0, dead: p.dead,
     adm: p.admin, fast: p.fast, god: p.god, inf: p.inf,
     unl: [...p.unl], look: p.look, inv: p.inv, cr: !!p.creator,
+    bag: p.bag, hb: p.hb, cap: p.bagCap, used: bagUsed(p), capx: p.bagCap < BAG_MAX ? BAG_STEP_COST : 0,
     lvl: lv, xp: Math.floor(g.xp), xp0: 25 * (lv - 1) * (lv - 1), xpn: 25 * lv * lv, earned: Math.floor(g.earned), jobs: g.n,
     jail: p.jailUntil > now ? Math.ceil((p.jailUntil - now) / 1000) : 0, safe: inSafe(p), fishing: !!p.fishing,
   });
@@ -1327,6 +1515,6 @@ server.listen(PORT, '0.0.0.0', () => {
 if (process.env.RENDER_EXTERNAL_URL) {
   setInterval(() => { fetch(process.env.RENDER_EXTERNAL_URL + '/status').catch(() => {}); }, 8 * 60 * 1000);
 }
-function shutdown() { for (const p of players.values()) saveOne(p); flushSaves(); process.exit(0); }
+function shutdown() { for (const p of players.values()) saveOne(p); flushSaves(); flushGangs(); process.exit(0); }
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);

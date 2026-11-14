@@ -130,7 +130,7 @@ input.txt:focus{border-color:var(--acc)}
 #hurt{position:absolute;inset:0;pointer-events:none;z-index:2;box-shadow:inset 0 0 120px 40px #ff0000;opacity:0;transition:opacity .45s}
 #hurt.on{opacity:.75;transition:none}
 #online{pointer-events:auto;cursor:pointer}
-@media (max-width:700px){#hotbar{display:none}#speedo{bottom:236px}}
+@media (max-width:700px){#speedo{bottom:236px}}
 
 /* ---------- v3: Np city RP ---------- */
 .lookrow{display:flex;gap:12px;align-items:center}
@@ -174,7 +174,21 @@ input.txt:focus{border-color:var(--acc)}
 .tab .grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
 .tab .grid2 button{text-align:center}
 .pop .danger{border-color:#b3261e!important;background:#3a1210!important}
-body.mob #hotbar{display:none}
+body.mob #hotbar{bottom:214px;gap:4px}
+body.mob #hotbar div{width:42px;height:42px;font-size:21px;border-radius:10px}
+@media (orientation:portrait){body.mob #sideBtns{display:grid;grid-template-columns:repeat(2,46px)}}
+#sideBtns button{position:relative}
+#bGang.badge::after{content:'';position:absolute;top:2px;right:2px;width:12px;height:12px;border-radius:50%;background:#ff3b3b;border:2px solid #0b0e14}
+.bagGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.bagGrid .it{position:relative;min-height:64px;border-radius:10px;background:#0b0e14;border:2px solid #ffffff22;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:24px;padding:4px 2px;text-align:center;cursor:pointer;color:#fff}
+.bagGrid .it small{font-size:11px;color:#cfd6e4;line-height:1.15;margin:0}
+.bagGrid .it i{position:absolute;right:5px;top:2px;font-size:12px;color:#ffd27a;font-style:normal;font-weight:800}
+.bagGrid .it.on{border-color:var(--acc);background:#2a2314cc}
+.bagGrid .it.empty{opacity:.35;cursor:default}
+.mem{display:flex;align-items:center;gap:8px;padding:6px 8px;background:#0b0e14;border-radius:10px}
+.mem span{flex:1}.mem .dot{width:9px;height:9px;border-radius:50%;background:#5b6475;flex:none}.mem .dot.on{background:#4be07f}
+.pop .mem button{padding:6px 10px}
+.invc{padding:8px;border:1px solid #ffd27a66;background:#2a2314aa;border-radius:10px;font-size:14px}
 body.mob #chatlog{bottom:176px}
 .gift{padding:2px 8px;border-radius:8px;border:1px solid var(--line);background:#1b212d;font-size:13px}
 .gift:disabled{opacity:.35}
@@ -188,6 +202,8 @@ body.mob #chatlog{bottom:176px}
   #online,#ping{font-size:11px}
   #sideBtns{top:auto;left:50%;transform:translateX(-50%);bottom:max(8px,env(safe-area-inset-bottom));flex-direction:row;gap:6px}
   #sideBtns button{width:40px;height:40px;font-size:19px}
+  body.mob #hotbar{bottom:56px}
+  body.mob #hotbar div{width:36px;height:36px;font-size:18px}
   #stick{width:112px;height:112px;left:max(18px,env(safe-area-inset-left));bottom:max(16px,env(safe-area-inset-bottom))}
   #btns{transform:scale(.78);transform-origin:bottom right;bottom:max(10px,env(safe-area-inset-bottom))}
   #ctxBtns{bottom:max(166px,calc(env(safe-area-inset-bottom) + 166px))}
@@ -279,6 +295,8 @@ body.mob #chatlog{bottom:176px}
     <button id="bMap" title="แผนที่">🗺️</button>
     <button id="bView" title="สลับมุมมอง 3D/2D">📷</button>
     <button id="bChat" title="แชท">💬</button>
+    <button id="bBag" title="กระเป๋า">🎒</button>
+    <button id="bGang" title="แก๊ง">🏴</button>
     <button id="bAdm" title="ระบบผู้สร้าง" hidden>🛠️</button>
   </div>
   <div id="ctxBtns"><button id="bFish" hidden title="ตกปลา">🎣</button><button id="bArrest" hidden title="จับกุม">🚓</button></div>
@@ -306,6 +324,17 @@ body.mob #chatlog{bottom:176px}
 
   <div id="menu" class="pop" hidden></div>
 
+  <div id="bag" class="pop" hidden>
+    <h3>🎒 กระเป๋า</h3>
+    <div class="sm" id="bagInfo"></div>
+    <div class="sec">ช่องใช้งานด้านล่าง (แตะเพื่อเอาออก)</div>
+    <div class="bagGrid" id="bagHb"></div>
+    <div class="sec">ของในกระเป๋า (แตะเพื่อนำไปใส่ช่องใช้งาน แล้วแตะที่ช่องด้านล่างจอเพื่อใช้)</div>
+    <div class="bagGrid" id="bagItems"></div>
+    <button id="bagX">➕ ขยายกระเป๋า</button>
+    <button id="bagClose">ปิด</button>
+  </div>
+  <div id="gang" class="pop" hidden></div>
   <div id="admin" class="pop" hidden>
     <h3>🛡️ แผงแอดมิน</h3>
     <select id="admTarget"></select>
@@ -509,7 +538,7 @@ let camYaw = 0, camPitch = 0.32, lastLookT = 0, locked = false, dragLook = false
 const unlock = () => { try { document.exitPointerLock && document.exitPointerLock(); } catch (e) {} };
 function isGun(id) { const w = WP[id]; return !!(w && !w.melee); }
 const wname = id => (WP[id] || {}).n || id;
-const me = { id: 0, hp: 100, mhp: 100, money: 0, bank: 0, hunger: 80, ammo: 0, gun: true, career: 'worker', wanted: false, dead: false, adm: false, fast: false, god: false, inf: false, wp: 'fist', own: ['fist'], carm: '', stars: 0, unl: [], look: [0, 0, 0], inv: [0, 0, 0, 0], lvl: 1, xp: 0, xp0: 0, xpn: 25, earned: 0, jobs: 0, jail: 0, safe: false, fishing: false };
+const me = { id: 0, hp: 100, mhp: 100, money: 0, bank: 0, hunger: 80, ammo: 0, gun: true, career: 'worker', wanted: false, dead: false, adm: false, fast: false, god: false, inf: false, wp: 'fist', own: ['fist'], carm: '', stars: 0, unl: [], look: [0, 0, 0], inv: [0, 0, 0, 0], bag: {}, hb: [null, null, null, null, null, null], cap: 20, used: 0, capx: 5000, lvl: 1, xp: 0, xp0: 0, xpn: 25, earned: 0, jobs: 0, jail: 0, safe: false, fishing: false };
 const players = new Map(), names = new Map(), cars = [], shots = [], peds = new Map(), bubbles = new Map();
 let pingMs = 0;
 
@@ -550,11 +579,19 @@ function handle(m) {
       { const wl = $('#welcome'); wl.hidden = false; wl.style.animation = 'none'; void wl.offsetWidth; wl.style.animation = ''; setTimeout(() => { wl.hidden = true; }, 4300); }
       break;
     }
+    case 'gang': {
+      const had = gangInfo.inv.length;
+      gangInfo = { g: m.g, inv: m.inv || [], cost: m.cost || 50000 };
+      if (gangInfo.inv.length > had && !gangInfo.g) addFeed('📨 คุณมีคำเชิญเข้าแก๊งใหม่ — เปิดปุ่ม 🏴 เพื่อตอบรับ');
+      renderGang(); updateGangBadge();
+      break;
+    }
     case 'roster': {
       names.clear();
-      for (const [id, n, c, p, a, sh, pa, sk] of m.list) names.set(id, { n, c, p, a: !!a, sh: sh | 0, pa: pa | 0, sk: sk | 0 });
+      for (const [id, n, c, p, a, sh, pa, sk, g] of m.list) names.set(id, { n, c, p, a: !!a, sh: sh | 0, pa: pa | 0, sk: sk | 0, g: g || '' });
       $('#online').textContent = `👥 ${m.list.length}/50`;
       fillTargets(); updateHud();
+      if (!$('#gang').hidden && gangInfo.g && gangInfo.g.owner) renderGang();
       break;
     }
     case 's': onSnap(m); break;
@@ -648,22 +685,113 @@ function engine(speed) {
 }
 function flashHurt() { const h = $('#hurt'); h.classList.add('on'); setTimeout(() => h.classList.remove('on'), 110); }
 const WICON = { fist: '👊', bat: '🏏', knife: '🔪', pistol: '🔫', smg: '🔫', shotgun: '💥', rifle: '🎯' };
+const ITEM_INFO = { snack: ['🍫', 'ขนม'], drink: ['🥤', 'น้ำอัดลม'], medkit: ['🩹', 'ชุดปฐมพยาบาล'], ammo: ['📦', 'กระสุน 12 นัด'] };
+const itemIcon = id => (ITEM_INFO[id] && ITEM_INFO[id][0]) || WICON[id] || '❔';
+const itemName = id => (ITEM_INFO[id] && ITEM_INFO[id][1]) || (WP[id] ? String(WP[id].n).replace(/^\S+\s*/, '') : id);
 let hbSig = '';
 function renderHotbar() {
-  const hb = $('#hotbar'); hb.hidden = me.own.length < 2;
-  const sig = me.wp + '|' + me.own.join() + '|' + (isGun(me.wp) ? (me.inf ? 'i' : me.ammo) : '');
+  const hb = $('#hotbar'); hb.hidden = false;
+  const sig = me.wp + '|' + (me.hb || []).join() + '|' + JSON.stringify(me.bag || {}) + '|' + (isGun(me.wp) ? (me.inf ? 'i' : me.ammo) : '');
   if (sig === hbSig) return; hbSig = sig;
   hb.textContent = '';
-  WORD.forEach((id, i) => {
-    if (!me.own.includes(id)) return;
-    const d = document.createElement('div'); if (id === me.wp) d.className = 'sel';
-    d.textContent = WICON[id] || '❔';
+  ['fist', ...(me.hb || [])].forEach((id, i) => {
+    const d = document.createElement('div');
+    if (id && id === me.wp) d.className = 'sel';
+    if (id) d.textContent = itemIcon(id); else d.style.opacity = '.35';
     const sm = document.createElement('small'); sm.textContent = i + 1; d.appendChild(sm);
-    if (isGun(id)) { const am = document.createElement('i'); am.textContent = me.inf ? '∞' : me.ammo; d.appendChild(am); }
-    d.onpointerdown = e => { e.preventDefault(); selWeapon(i); };
+    if (id && isGun(id) && id === me.wp) { const am = document.createElement('i'); am.textContent = me.inf ? '∞' : me.ammo; d.appendChild(am); }
+    else if (id && me.bag && me.bag[id] > 1) { const am = document.createElement('i'); am.textContent = 'x' + me.bag[id]; d.appendChild(am); }
+    d.onpointerdown = e => { e.preventDefault(); if (id) send({ t: 'use', id }); };
     hb.appendChild(d);
   });
 }
+/* ---------- กระเป๋า ---------- */
+function renderBag() {
+  if ($('#bag').hidden) return;
+  const hbArr = me.hb || [], bag = me.bag || {};
+  $('#bagInfo').textContent = `ใช้ ${me.used}/${me.cap} ชิ้น · เงิน $${fmt(me.money)}`;
+  const g1 = $('#bagHb'); g1.textContent = '';
+  for (let i = 0; i < 6; i++) {
+    const id = hbArr[i], d = document.createElement('div'); d.className = 'it' + (id ? ' on' : ' empty');
+    d.textContent = id ? itemIcon(id) : '—';
+    const sm = document.createElement('small'); sm.textContent = id ? itemName(id) : 'ช่อง ' + (i + 2); d.appendChild(sm);
+    if (id) d.onclick = () => send({ t: 'hb', i, id: null });
+    g1.appendChild(d);
+  }
+  const g2 = $('#bagItems'); g2.textContent = '';
+  const items = [...Object.entries(bag).map(([id, n]) => [id, n]), ...me.own.filter(id => id !== 'fist').map(id => [id, 1])];
+  if (!items.length) { const e = document.createElement('div'); e.className = 'sm'; e.style.gridColumn = '1/-1'; e.textContent = 'ยังไม่มีของ — ซื้อได้ที่ร้านค้า 🏪 / ร้านอาวุธ 🔫'; g2.appendChild(e); }
+  for (const [id, n] of items) {
+    const inHb = hbArr.indexOf(id), d = document.createElement('div'); d.className = 'it' + (inHb >= 0 ? ' on' : '');
+    d.textContent = itemIcon(id);
+    const sm = document.createElement('small'); sm.textContent = itemName(id) + (inHb >= 0 ? ' ✔' : ''); d.appendChild(sm);
+    if (n > 1 || bag[id]) { const ct = document.createElement('i'); ct.textContent = 'x' + n; d.appendChild(ct); }
+    d.onclick = () => {
+      if (inHb >= 0) { send({ t: 'hb', i: inHb, id: null }); return; }
+      const free = hbArr.indexOf(null);
+      if (free < 0) { addFeed('ช่องใช้งานเต็ม — แตะของในช่องด้านบนเพื่อเอาออกก่อน'); return; }
+      send({ t: 'hb', i: free, id });
+    };
+    g2.appendChild(d);
+  }
+  const bx = $('#bagX'); bx.disabled = !me.capx;
+  bx.textContent = me.capx ? `➕ ขยายกระเป๋า +10 ช่อง ($${fmt(me.capx)})` : 'กระเป๋าขยายสูงสุดแล้ว';
+}
+function closePops() { $('#bag').hidden = true; $('#gang').hidden = true; }
+function toggleBag() { if (!$('#bag').hidden) { $('#bag').hidden = true; return; } unlock(); closeMenu(); $('#gang').hidden = true; $('#bag').hidden = false; renderBag(); }
+$('#bBag').onclick = toggleBag;
+$('#bagClose').onclick = () => { $('#bag').hidden = true; };
+$('#bagX').onclick = () => send({ t: 'bagx' });
+/* ---------- แก๊ง ---------- */
+let gangInfo = { g: null, inv: [], cost: 50000 };
+function updateGangBadge() { $('#bGang').classList.toggle('badge', !gangInfo.g && gangInfo.inv.length > 0); }
+function renderGang() {
+  const box = $('#gang'); if (box.hidden) return;
+  box.textContent = '';
+  const add = (tag, txt, cls) => { const e = document.createElement(tag); if (txt != null) e.textContent = txt; if (cls) e.className = cls; box.appendChild(e); return e; };
+  const g = gangInfo.g;
+  if (!g) {
+    add('h3', '🏴 แก๊ง');
+    if (gangInfo.inv.length) {
+      add('div', 'คำเชิญเข้าแก๊ง', 'sec');
+      for (const iv of gangInfo.inv) {
+        const card = add('div', null, 'invc');
+        card.textContent = `📨 คุณถูกเชิญเข้าแก๊ง "${iv.g}" โดย ${iv.from}`;
+        const row = document.createElement('div'); row.className = 'row'; row.style.marginTop = '6px';
+        const ok = document.createElement('button'); ok.textContent = '✅ รับ'; ok.onclick = () => send({ t: 'gang', a: 'accept', gid: iv.gid });
+        const no = document.createElement('button'); no.textContent = '❌ ปฏิเสธ'; no.onclick = () => send({ t: 'gang', a: 'decline', gid: iv.gid });
+        row.append(ok, no); card.appendChild(row);
+      }
+    } else add('div', 'ยังไม่มีคำเชิญ', 'sm');
+    add('div', `สร้างแก๊งของคุณเอง ราคา $${fmt(gangInfo.cost)}`, 'sec');
+    const inp = add('input'); inp.id = 'gangName'; inp.maxLength = 16; inp.placeholder = 'ชื่อแก๊ง (2-16 ตัวอักษร)'; inp.autocomplete = 'off';
+    const cb = add('button', `🏴 สร้างแก๊ง ($${fmt(gangInfo.cost)})`);
+    cb.onclick = () => { const v = inp.value.trim(); if (v.length < 2) { addFeed('ใส่ชื่อแก๊งก่อน (2-16 ตัวอักษร)'); return; } if (confirm(`สร้างแก๊ง "${v}" ราคา $${fmt(gangInfo.cost)} ?`)) send({ t: 'gang', a: 'create', name: v }); };
+  } else {
+    add('h3', `🏴 ${g.name}`);
+    add('div', `สมาชิก ${g.members.length}/${g.max}${g.owner ? ' · คุณเป็นเจ้าของแก๊ง' : ''}`, 'sm');
+    for (const mb of g.members) {
+      const r = add('div', null, 'mem');
+      const dot = document.createElement('i'); dot.className = 'dot' + (mb.on ? ' on' : ''); r.appendChild(dot);
+      const nm = document.createElement('span'); nm.textContent = (mb.o ? '👑 ' : '') + mb.n + (mb.on ? '' : ' (ออฟไลน์)'); r.appendChild(nm);
+      if (g.owner && !mb.o) { const kb = document.createElement('button'); kb.textContent = '🥾 เตะ'; kb.onclick = () => { if (confirm(`เตะ ${mb.n} ออกจากแก๊ง?`)) send({ t: 'gang', a: 'kick', m: mb.m }); }; r.appendChild(kb); }
+    }
+    if (g.owner) {
+      add('div', 'เชิญผู้เล่นเข้าแก๊ง (เลือกผู้เล่น)', 'sec');
+      const sel = add('select'); sel.id = 'gangTarget';
+      for (const [id, v] of names) if (id !== me.id && !v.g) { const o = document.createElement('option'); o.value = id; o.textContent = `[${id}] ${v.n}`; sel.appendChild(o); }
+      if (!sel.options.length) { const o = document.createElement('option'); o.textContent = '(ไม่มีผู้เล่นที่เชิญได้)'; o.value = ''; sel.appendChild(o); }
+      const ib = add('button', '📨 ส่งคำเชิญ'); ib.onclick = () => { if (sel.value) send({ t: 'gang', a: 'invite', id: +sel.value }); };
+      const db = add('button', '💥 ยุบแก๊ง', 'danger'); db.onclick = () => { if (confirm(`ยุบแก๊ง "${g.name}" ? สมาชิกทุกคนจะออกจากแก๊ง`)) send({ t: 'gang', a: 'disband' }); };
+    } else {
+      const lb = add('button', '🚪 ออกจากแก๊ง', 'danger'); lb.onclick = () => { if (confirm('ออกจากแก๊งนี้?')) send({ t: 'gang', a: 'leave' }); };
+    }
+    add('div', 'แชทเฉพาะแก๊ง: พิมพ์ /g ข้อความ', 'sm');
+  }
+  add('button', 'ปิด').onclick = () => { box.hidden = true; };
+}
+function toggleGang() { const b = $('#gang'); if (!b.hidden) { b.hidden = true; return; } unlock(); closeMenu(); $('#bag').hidden = true; b.hidden = false; renderGang(); }
+$('#bGang').onclick = toggleGang;
 function showScore(on) {
   const sc = $('#score');
   if (!on) { sc.hidden = true; return; }
@@ -680,6 +808,7 @@ function showScore(on) {
       const e = players.get(id), near = !!(mp && e && Math.hypot(e.x - mp.x, e.y - mp.y) < 200);
       const g1 = document.createElement('button'); g1.className = 'gift'; g1.textContent = '💵'; g1.title = 'ให้เงิน'; g1.disabled = !near; g1.onclick = () => giveMoney(id, v.n);
       td.appendChild(g1);
+      if (gangInfo.g && gangInfo.g.owner && !v.g) { const g3 = document.createElement('button'); g3.className = 'gift'; g3.textContent = '🏴'; g3.title = 'เชิญเข้าแก๊ง'; g3.onclick = () => send({ t: 'gang', a: 'invite', id }); td.appendChild(g3); }
       if (fishN > 0) { const g2 = document.createElement('button'); g2.className = 'gift'; g2.textContent = '🐟'; g2.title = 'ให้ปลา'; g2.disabled = !near; g2.onclick = () => giveFish(id, v.n); td.appendChild(g2); }
     }
     tr.appendChild(td);
@@ -734,6 +863,7 @@ function updateHud() {
   $('#dead').hidden = !me.dead;
   $('#jail').hidden = !(me.jail > 0); $('#jailN').textContent = me.jail + ' วิ';
   if (me.jail > 0) { closeMenu(); }
+  renderBag();
   $('#bAdm').hidden = !me.adm;
   if (!me.adm) $('#admin').hidden = true;
   document.querySelectorAll('#admTabs [data-cr]').forEach(x => x.hidden = !me.cr);
@@ -985,7 +1115,7 @@ let lastAng = 0, punchHeld = false, shootHeld = false, lmb = false, lastPunchSen
 function anyOverlay() { return !$('#fullmap').hidden || !$('#menu').hidden || !$('#admin').hidden; }
 addEventListener('keydown', e => {
   if (!joined || isTyping()) return;
-  if (e.code === 'Escape') { closeMap(); closeMenu(); $('#admin').hidden = true; return; }
+  if (e.code === 'Escape') { closeMap(); closeMenu(); $('#admin').hidden = true; closePops(); return; }
   if (e.code === 'Tab') { e.preventDefault(); showScore(true); return; }
   if (e.code === 'Enter') { e.preventDefault(); openChat(); return; }
   if (e.repeat) { if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault(); return; }
@@ -1070,7 +1200,7 @@ function cycleWeapon() {
   const own = WORD.filter(id => me.own.includes(id)); if (own.length < 2) return;
   send({ t: 'wpn', w: own[(own.indexOf(me.wp) + 1) % own.length] });
 }
-function selWeapon(i) { const id = WORD[i]; if (id && me.own.includes(id)) send({ t: 'wpn', w: id }); }
+function selWeapon(i) { const id = i === 0 ? 'fist' : (me.hb || [])[i - 1]; if (id) send({ t: 'use', id }); }
 function applyView() {
   $('#look').hidden = !(platform === 'mobile' && view === '3d');
   store.set('sc_view', view);
@@ -1339,7 +1469,7 @@ function frame(t) {
       ctx.fillStyle = pct < 0.3 ? '#ff5050' : '#4be07f'; ctx.fillRect(e.rx - w / 2, ny - 4, w * pct, 5);
     }
     ctx.font = '700 13px system-ui,"Noto Sans Thai",sans-serif'; ctx.lineWidth = 3; ctx.strokeStyle = '#000c';
-    const label = `[${e.id}] ${info.a ? '🛡️' : ''}${cr.i} ${info.n}${info.p === 'mobile' ? ' 📱' : ''}`;
+    const label = `[${e.id}] ${info.g ? '🏴' + info.g + ' ' : ''}${info.a ? '🛡️' : ''}${cr.i} ${info.n}${info.p === 'mobile' ? ' 📱' : ''}`;
     ctx.strokeText(label, e.rx, ny - 8); ctx.fillStyle = info.a ? '#ff9f43' : e.id === me.id ? '#ffd166' : '#fff'; ctx.fillText(label, e.rx, ny - 8);
   }
 
@@ -1551,7 +1681,7 @@ function player3(e, d, t) {
     const fs = Math.round(Math.max(10, Math.min(15, s * 9)));
     ctx.font = `700 ${fs}px system-ui,"Noto Sans Thai",sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
     ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.8)';
-    const label = `[${e.id}] ${info.a ? '🛡️' : ''}${cr.i} ${info.n}${info.p === 'mobile' ? ' 📱' : ''}`;
+    const label = `[${e.id}] ${info.g ? '🏴' + info.g + ' ' : ''}${info.a ? '🛡️' : ''}${cr.i} ${info.n}${info.p === 'mobile' ? ' 📱' : ''}`;
     ctx.strokeText(label, top.sx, top.sy - 6); ctx.fillStyle = info.a ? '#ff9f43' : e.id === me.id ? '#ffd166' : '#fff'; ctx.fillText(label, top.sx, top.sy - 6);
     if (e.id !== me.id && !dead) {
       const w = 34, pct = Math.max(0, Math.min(1, e.hp / (info.c === 'police' ? 130 : info.c === 'thief' ? 90 : 100)));
