@@ -129,6 +129,10 @@ body.driving #hotbar{display:none}
 #hotbar div.sel{border-color:var(--acc);background:#2a2314cc}
 #hotbar div small{position:absolute;left:5px;top:2px;font-size:11px;color:#cfd6e4;font-weight:700}
 #hotbar div i{position:absolute;right:4px;bottom:2px;font-size:11px;font-style:normal;color:#ffd27a;font-weight:800}
+#destInfo{position:absolute;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top) + 54px);z-index:6;background:#0b0e14d9;border:2px solid #ffd23f;border-radius:20px;padding:5px 8px 5px 14px;font-weight:800;font-size:14px;display:flex;gap:8px;align-items:center;white-space:nowrap}
+#destInfo button{border:0;background:#ffffff22;color:#fff;border-radius:50%;width:26px;height:26px;font-size:13px}
+#fmHint{position:absolute;top:8px;left:0;right:0;text-align:center;font-size:13px;color:#ffe066;pointer-events:none;text-shadow:0 1px 3px #000}
+#fmClear{position:absolute;bottom:10px;left:10px}
 #speedo{position:absolute;left:50%;transform:translateX(-50%);bottom:84px;text-align:center;pointer-events:none;text-shadow:0 2px 6px #000;z-index:4}
 #speedo b{font-size:40px;font-weight:900;letter-spacing:1px}
 #speedo small{display:block;font-size:12px;color:#cfd6e4;font-weight:700;margin-top:-4px}
@@ -312,6 +316,7 @@ body.mob #chatlog{bottom:176px}
   <div id="ctxBtns"><button id="bFish" hidden title="ตกปลา">🎣</button><button id="bArrest" hidden title="จับกุม">🚓</button></div>
   <div id="feed"></div>
   <div id="hotbar" hidden></div>
+  <div id="destInfo" hidden><span id="destTxt"></span><button id="destX">✖</button></div>
   <div id="speedo" hidden><b id="spdN">0</b><small>กม./ชม.</small></div>
   <div id="score" hidden></div>
   <div id="announce"></div>
@@ -400,6 +405,8 @@ body.mob #chatlog{bottom:176px}
   <div id="fullmap" class="ov" hidden>
     <canvas id="fmc"></canvas>
     <div id="legend"></div>
+    <div id="fmHint">👆 แตะบนแผนที่เพื่อปักหมุดจุดหมาย — จะมีเส้นทางนำทาง</div>
+    <button id="fmClear">🧹 ลบจุดหมาย</button>
     <button id="fmClose">ปิดแผนที่</button>
   </div>
 
@@ -645,7 +652,7 @@ function onSnap(m) {
     cid.add(a[0]);
     let c = cars[a[0] - 1];
     if (!c) { c = { id: a[0], rx: a[1], ry: a[2], rang: a[3] / 100 }; cars[a[0] - 1] = c; }
-    c.x = a[1]; c.y = a[2]; c.ang = a[3] / 100; c.driver = a[4]; c.color = a[5];
+    c.x = a[1]; c.y = a[2]; c.ang = a[3] / 100; c.driver = a[4]; c.color = a[5]; c.spd = a[6] || 0;
   }
   for (let i = 0; i < cars.length; i++) if (cars[i] && !cid.has(i + 1)) cars[i] = undefined;
   const pid = new Set();
@@ -1111,6 +1118,11 @@ function drawFull() {
     g.lineWidth = 3; g.strokeStyle = '#000c'; g.strokeText(info.n, e.x * k, e.y * k - 11);
     g.fillStyle = '#fff'; g.fillText(info.n, e.x * k, e.y * k - 11);
   }
+  if (dest) {
+    const mp0 = myP(); if (mp0) route = buildRoute({ x: mp0.rx, y: mp0.ry }, dest);
+    g.save(); g.scale(k, k); routeStroke(g, 7 / k * 0.9); g.restore();
+    g.font = `${Math.max(22, S / 18)}px sans-serif`; g.textAlign = 'center'; g.textBaseline = 'bottom'; g.fillStyle = '#000'; g.fillText('🚩', dest.x * k, dest.y * k);
+  }
   const mp = myP();
   if (mp) {
     const pulse = 6 + Math.sin(performance.now() / 200) * 2;
@@ -1118,6 +1130,90 @@ function drawFull() {
     g.beginPath(); g.arc(mp.x * k, mp.y * k, pulse, 0, 7); g.fill(); g.stroke();
   }
 }
+
+/* ============================== จุดหมาย + เส้นทาง ============================== */
+let dest = null, route = [], routeAt = 0;
+const snapRoad = (x, y) => {
+  const nx = Math.round(x / CELL) * CELL, ny = Math.round(y / CELL) * CELL;
+  return Math.abs(x - nx) < Math.abs(y - ny) ? { x: nx, y } : { x, y: ny };
+};
+function buildRoute(a, b) {
+  const clampI = v => Math.max(0, Math.min(NN, Math.round(v / CELL)));
+  const sA = snapRoad(a.x, a.y), sB = snapRoad(b.x, b.y);
+  const ia = { x: clampI(sA.x) * CELL, y: clampI(sA.y) * CELL }, ib = { x: clampI(sB.x) * CELL, y: clampI(sB.y) * CELL };
+  const pts = [{ x: a.x, y: a.y }, sA];
+  if (Math.abs(sA.x - ia.x) > 1 || Math.abs(sA.y - ia.y) > 1) pts.push(ia);
+  if (ia.x !== ib.x && ia.y !== ib.y) pts.push({ x: ib.x, y: ia.y });
+  pts.push(ib);
+  if (Math.abs(sB.x - ib.x) > 1 || Math.abs(sB.y - ib.y) > 1) pts.push(sB);
+  pts.push({ x: b.x, y: b.y });
+  return pts;
+}
+function setDest(x, y, label) {
+  dest = { x, y, label: label || 'จุดหมาย' }; routeAt = 0;
+  addFeed('🚩 ปักหมุดแล้ว — ตามเส้นสีเหลืองไปได้เลย');
+}
+function clearDest() { dest = null; route = []; $('#destInfo').hidden = true; }
+function routeTick(mp) {
+  if (!dest) return;
+  const dx = dest.x - mp.rx, dy = dest.y - mp.ry, d = Math.hypot(dx, dy);
+  if (d < 70) { addFeed('🎉 ถึงจุดหมายแล้ว!'); clearDest(); return; }
+  const now = performance.now();
+  if (now - routeAt > 250) { routeAt = now; route = buildRoute({ x: mp.rx, y: mp.ry }, dest); }
+  $('#destInfo').hidden = false;
+  $('#destTxt').textContent = `🚩 ${dest.label} · ${d >= 1000 ? (d / 10000).toFixed(1) + ' กม.' : Math.round(d / 10) + ' ม.'}`;
+}
+function routeStroke(g, w) {
+  if (route.length < 2) return;
+  g.lineJoin = 'round'; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(route[0].x, route[0].y); for (let i = 1; i < route.length; i++) g.lineTo(route[i].x, route[i].y);
+  g.strokeStyle = '#000a'; g.lineWidth = w + 6; g.stroke();
+  g.strokeStyle = '#ffd23f'; g.lineWidth = w; g.stroke();
+}
+function drawRoute2d() {
+  if (!dest) return;
+  routeStroke(ctx, 10);
+  const pulse = 1 + Math.sin(performance.now() / 250) * 0.12;
+  ctx.font = `${Math.round(46 * pulse)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillText('🚩', dest.x, dest.y);
+}
+function drawRoute3d() {
+  if (!dest || route.length < 2) return;
+  const pts = [];
+  for (let i = 0; i < route.length - 1; i++) {
+    const a = route[i], b = route[i + 1], L = Math.hypot(b.x - a.x, b.y - a.y), n = Math.max(1, Math.ceil(L / 50));
+    for (let j = 0; j < n; j++) pts.push([a.x + (b.x - a.x) * j / n, a.y + (b.y - a.y) * j / n]);
+  }
+  const last = route[route.length - 1]; pts.push([last.x, last.y]);
+  const pr = pts.map(p => projPt(p[0], p[1], 2));
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  for (const [col, w] of [['#000a', 9], ['#ffd23f', 5]]) {
+    ctx.strokeStyle = col; ctx.beginPath(); let pen = false;
+    for (let i = 0; i < pr.length; i++) {
+      const q = pr[i]; if (!q || Math.hypot(pts[i][0] - camXY.x, pts[i][1] - camXY.y) > 1800) { pen = false; continue; }
+      ctx.lineWidth = Math.max(2, w * Math.min(1.6, q.s * 3.2));
+      if (!pen) { ctx.moveTo(q.sx, q.sy); pen = true; } else ctx.lineTo(q.sx, q.sy);
+    }
+    ctx.stroke();
+  }
+  // เสาไฟบอกจุดหมาย
+  const b0 = projPt(dest.x, dest.y, 0), b1 = projPt(dest.x, dest.y, 420);
+  if (b0 && b1) {
+    const gr = ctx.createLinearGradient(0, b1.sy, 0, b0.sy); gr.addColorStop(0, 'rgba(255,210,63,0)'); gr.addColorStop(1, 'rgba(255,210,63,.75)');
+    ctx.fillStyle = gr; ctx.fillRect(b0.sx - 9 * b0.s * 1.5, b1.sy, 18 * b0.s * 1.5, b0.sy - b1.sy);
+    ctx.font = `${Math.round(Math.max(22, Math.min(44, 60 * b1.s)))}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillText('🚩', b1.sx, b1.sy + 6);
+  }
+}
+$('#fmc').addEventListener('pointerdown', e => {
+  const r = $('#fmc').getBoundingClientRect(), x = (e.clientX - r.left) / r.width * W, y = (e.clientY - r.top) / r.height * W;
+  let label = 'จุดหมาย', tx = x, ty = y;
+  for (const b of blocks) if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
+    const sv = SVC[b.k]; if (sv) { label = sv.l.replace(/^\S+\s*/, '') || sv.l; tx = b.x + b.w / 2; ty = b.y + b.h / 2; } else if (b.k === 'park') label = 'สวนสาธารณะ';
+    break;
+  }
+  setDest(tx, ty, label); drawFull();
+});
+$('#fmClear').onclick = () => { clearDest(); drawFull(); };
+$('#destX').onclick = clearDest;
 
 /* ============================== อินพุต ============================== */
 const keys = {};
@@ -1179,10 +1275,10 @@ cv.addEventListener('contextmenu', e => e.preventDefault());
 const stickEl = $('#stick'), knob = $('#knob');
 function stickMove(e) {
   const r = stickEl.getBoundingClientRect();
-  let dx = (e.clientX - (r.left + r.width / 2)) / 55, dy = (e.clientY - (r.top + r.height / 2)) / 55;
+  let dx = (e.clientX - (r.left + r.width / 2)) / 38, dy = (e.clientY - (r.top + r.height / 2)) / 38;
   const l = Math.hypot(dx, dy); if (l > 1) { dx /= l; dy /= l; }
   stick.x = dx; stick.y = dy;
-  knob.style.transform = `translate(${dx * 55}px,${dy * 55}px)`;
+  knob.style.transform = `translate(${dx * 50}px,${dy * 50}px)`;
 }
 stickEl.addEventListener('pointerdown', e => { stick.active = true; stick.id = e.pointerId; stickEl.setPointerCapture(e.pointerId); stickMove(e); e.preventDefault(); });
 stickEl.addEventListener('pointermove', e => { if (stick.active && e.pointerId === stick.id) stickMove(e); });
@@ -1242,7 +1338,11 @@ function inputState() {
   const ky = (keys.KeyS || (arrows && keys.ArrowDown) ? 1 : 0) - (keys.KeyW || (arrows && keys.ArrowUp) ? 1 : 0);
   if (view === '3d' && !inCar) {
     let fw = -ky, rt = kx;
-    if (stick.active) { fw = -stick.y; rt = stick.x; }
+    if (stick.active) {
+      fw = -stick.y; rt = stick.x;
+      if (Math.hypot(fw, rt) < 0.12) fw = rt = 0;
+      else if (platform === 'mobile' && performance.now() - lastLookT > 500 && fw > 0.25 && Math.abs(rt) > 0.15) { camYaw += rt * 1.5 * 0.05; rt *= 0.5; }   // เดินเฉียง = กล้องเลี้ยวตามเอง
+    }
     const c = Math.cos(camYaw), sn = Math.sin(camYaw);
     mx = fw * c - rt * sn; my = fw * sn + rt * c;
     const l = Math.hypot(mx, my); if (l > 1) { mx /= l; my /= l; }
@@ -1365,6 +1465,35 @@ function predictLocal(e, dt) {
   e.rx = pred.x; e.ry = pred.y;
 }
 
+let pc = null, pcId = 0;
+function predictCar(mp, dt) {
+  const c = mp.car ? cars[mp.car - 1] : null;
+  if (!c || !me.cm || me.dead) { pc = null; pcId = 0; return; }
+  const [MAXS, ACC] = me.cm, BRAKE = 1100, FRIC = 320;
+  if (!pc || pcId !== c.id) { pc = { x: c.x, y: c.y, ang: c.ang, speed: c.spd || 0, st: 0 }; pcId = c.id; }
+  const th = curIn.th || 0, st = curIn.st || 0, ap = (v, t, d) => (v < t ? Math.min(v + d, t) : Math.max(v - d, t));
+  if (th !== 0) {
+    const tg = th > 0 ? th * MAXS : th * MAXS * 0.4, opp = pc.speed !== 0 && Math.sign(tg) !== Math.sign(pc.speed);
+    pc.speed = ap(pc.speed, tg, (opp ? BRAKE : ACC) * dt);
+  } else pc.speed = ap(pc.speed, 0, FRIC * dt);
+  pc.st = ap(pc.st, st, (st === 0 ? 9 : 5.5) * dt);
+  pc.ang += pc.st * (3.0 - 1.9 * Math.min(1, Math.abs(pc.speed) / Math.max(MAXS, 1))) * dt * Math.max(-1, Math.min(1, pc.speed / 110));
+  if (Math.abs(pc.speed) > 0.5) {
+    const nx = pc.x + Math.cos(pc.ang) * pc.speed * dt, ny = pc.y + Math.sin(pc.ang) * pc.speed * dt;
+    const r = collideC(nx, ny, 22); pc.x = r.x; pc.y = r.y;
+    if ((r.x !== nx || r.y !== ny) && Math.abs(pc.speed) > 20) pc.speed *= Math.pow(0.55, dt * 20);
+  }
+  // ปรับให้ตรงกับเซิร์ฟเวอร์เบาๆ (เซิร์ฟเวอร์เป็นตัวจริง)
+  const L = Math.min(0.35, pingMs / 2000 + 0.03), sp = c.spd || 0;
+  const ex = c.x + Math.cos(c.ang) * sp * L - pc.x, ey = c.y + Math.sin(c.ang) * sp * L - pc.y, dist = Math.hypot(ex, ey);
+  if (dist > 260) { pc.x = c.x; pc.y = c.y; pc.ang = c.ang; pc.speed = sp; }
+  else {
+    const k = Math.min(1, dt * (dist > 80 ? 6 : 2.5)); pc.x += ex * k; pc.y += ey * k;
+    pc.ang = lerpAng(pc.ang, c.ang + pc.st * 0.0, Math.min(1, dt * 2.5));
+    pc.speed += (sp - pc.speed) * Math.min(1, dt * 2.5);
+  }
+  c.rx = pc.x; c.ry = pc.y; c.rang = pc.ang; mp.rx = pc.x; mp.ry = pc.y; mp.rang = pc.ang;
+}
 const lerpAng = (a, b, t) => { let d = b - a; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return a + d * t; };
 function rr(x, y, w, h, r) {
   ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
@@ -1378,11 +1507,17 @@ function frame(t) {
   const k = 1 - Math.exp(-dt * 11);
   const step = e => {
     if (Math.abs(e.x - e.rx) > 300 || Math.abs(e.y - e.ry) > 300) { e.rx = e.x; e.ry = e.y; e.rang = e.ang; }
+    else if (e.spd !== undefined && e.driver) {   // รถ: เดาตำแหน่งต่อด้วยความเร็ว แล้วค่อยๆ ดึงเข้าหาตำแหน่งจริง
+      const kk = 1 - Math.exp(-dt * 9), ca = Math.cos(e.ang), sa = Math.sin(e.ang);
+      e.rx += ca * e.spd * dt; e.ry += sa * e.spd * dt;
+      e.rx += (e.x + ca * e.spd * 0.06 - e.rx) * kk; e.ry += (e.y + sa * e.spd * 0.06 - e.ry) * kk;
+      e.rang = lerpAng(e.rang, e.ang, 1 - Math.exp(-dt * 14));
+    }
     else { e.rx += (e.x - e.rx) * k; e.ry += (e.y - e.ry) * k; e.rang = lerpAng(e.rang, e.ang, k); }
   };
   players.forEach(step); cars.forEach(c => c && step(c)); peds.forEach(step);
   const mp = myP(); if (!mp) return;
-  predictLocal(mp, dt);
+  predictLocal(mp, dt); predictCar(mp, dt); routeTick(mp);
   if (view === '3d') { render3d(mp, dt, t); drawMini(mp); return; }
 
   const vw = innerWidth, vh = innerHeight;
@@ -1440,6 +1575,7 @@ function frame(t) {
     }
   });
 
+  drawRoute2d();
   // รถ
   for (const c of cars) {
     if (!c || c.rx < x0 - 60 || c.rx > x1 + 60 || c.ry < y0 - 60 || c.ry > y1 + 60) continue;
@@ -1571,6 +1707,7 @@ function inSolid(x, y, z, m) {
   const b = blockAt(x, y); if (!b || b.k === 'park') return false;
   return x > b.x - m && x < b.x + b.w + m && y > b.y - m && y < b.y + b.h + m && z < HB(b);
 }
+const camXY = { x: 0, y: 0 };
 function setupCam(mp, dt) {
   const inCar = !!mp.car;
   if (inCar && performance.now() - lastLookT > 1800) camYaw = lerpAng(camYaw, mp.rang, Math.min(1, dt * 2.2));
@@ -1578,7 +1715,7 @@ function setupCam(mp, dt) {
   const D = inCar ? 290 : 170, hd = inCar ? 24 : 34, sh = inCar ? 0 : 26;
   const cp = Math.cos(camPitch), sp = Math.sin(camPitch), cy = Math.cos(camYaw), sy = Math.sin(camYaw);
   const fx = cp * cy, fy = cp * sy, fz = -sp, rx = -sy, ry = cy;
-  const tx = mp.rx, ty = mp.ry;
+  const tx = mp.rx, ty = mp.ry; camXY.x = tx; camXY.y = ty;
   const ix = tx - fx * D + rx * sh, iy = ty - fy * D + ry * sh, iz = hd + sp * D;
   let t = 1;
   for (let k = 1; k <= 12; k++) { const q = k / 12; if (inSolid(tx + (ix - tx) * q, ty + (iy - ty) * q, hd + (iz - hd) * q, 10)) { t = Math.max(0.12, (k - 1) / 12); break; } }
@@ -1867,6 +2004,7 @@ function render3d(mp, dt, t) {
     if (a <= 0) { shots.splice(i, 1); continue; }
     lineW(sh.x1, sh.y1, 28, sh.x2, sh.y2, 28, `rgba(255,236,150,${a.toFixed(2)})`, 2.4);
   }
+  drawRoute3d();
 }
 
 function drawMini(mp) {
@@ -1884,6 +2022,7 @@ function drawMini(mp) {
     mctx.fillStyle = b.k === 'park' ? '#2d7a47' : sv ? sv.m : '#59616d';
     mctx.fillRect(b.x, b.y, b.w, b.h);
   }
+  if (dest && route.length > 1) { mctx.save(); routeStroke(mctx, 22); mctx.restore(); }
   mctx.fillStyle = '#d9dde5';
   for (const c of cars) if (c) mctx.fillRect(c.rx - 16, c.ry - 11, 32, 22);
   mctx.fillStyle = '#9aa3b2';
@@ -1896,6 +2035,12 @@ function drawMini(mp) {
     mctx.beginPath(); mctx.arc(e.rx, e.ry, 30, 0, 7); mctx.fill();
   }
   mctx.restore();
+  if (dest) {
+    let vx = (dest.x - mp.rx) * k, vy = (dest.y - mp.ry) * k; const cs = Math.cos(th), sn = Math.sin(th);
+    let rx = vx * cs - vy * sn, ry = vx * sn + vy * cs; const l = Math.hypot(rx, ry), lim = R - 12;
+    if (l > lim) { rx *= lim / l; ry *= lim / l; }
+    mctx.font = '20px sans-serif'; mctx.textAlign = 'center'; mctx.textBaseline = 'bottom'; mctx.fillStyle = '#fff'; mctx.fillText('🚩', R + rx, R + ry + 4);
+  }
   mctx.fillStyle = '#fff'; mctx.strokeStyle = '#000'; mctx.lineWidth = 2;
   mctx.beginPath();
   if (view === '3d') { mctx.moveTo(R, R - 11); mctx.lineTo(R - 8, R + 8); mctx.lineTo(R, R + 4); mctx.lineTo(R + 8, R + 8); mctx.closePath(); }

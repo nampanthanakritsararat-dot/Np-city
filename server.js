@@ -15,7 +15,7 @@ const PORT = +process.env.PORT || 3000;
 const MAX_PLAYERS = 50;
 const TICK_MS = 50; // 20 ครั้ง/วินาที
 const CITY_NAME = 'Np-city RP';
-const VERSION = 'v3.5';
+const VERSION = 'v3.7';
 const DATA_FILE = path.join(__dirname, 'data.json');
 
 /* ------------------------------ บันทึกเงิน/อาชีพ ------------------------------ */
@@ -1324,7 +1324,8 @@ function updateCar(car, dt) {
     car.speed = approach(car.speed, 0, FRIC * dt);
   }
   // ขับง่าย: เลี้ยวได้ตั้งแต่ความเร็วต่ำ ยิ่งเร็วยิ่งเลี้ยวนุ่มขึ้น
-  car.ang += st * (2.9 - 1.3 * Math.min(1, Math.abs(car.speed) / Math.max(car.max, 1))) * dt * clamp(car.speed / 110, -1, 1);
+  car.stS = approach(car.stS || 0, st, (st === 0 ? 9 : 5.5) * dt);   // พวงมาลัยค่อยๆ หมุน ไม่กระชาก
+  car.ang += car.stS * (3.0 - 1.9 * Math.min(1, Math.abs(car.speed) / Math.max(car.max, 1))) * dt * clamp(car.speed / 110, -1, 1);
   if (Math.abs(car.speed) > 0.5) {
     const r = collide(car.x + Math.cos(car.ang) * car.speed * dt, car.y + Math.sin(car.ang) * car.speed * dt, 22);
     car.x = r.x; car.y = r.y;
@@ -1422,7 +1423,7 @@ function updatePlayer(p, dt, now) {
 function buildMe(p, now) {
   const g = progOf(p), lv = lvlOf(g);
   return JSON.stringify({
-    t: 'me', hp: Math.ceil(p.hp), mhp: p.maxhp, money: Math.floor(p.money), bank: Math.floor(p.bank),
+    t: 'me', cm: p.car && cars[p.car - 1] ? [Math.round(cars[p.car - 1].max * (p.fast ? 1.5 : 1)), Math.round(cars[p.car - 1].acc * (p.fast ? 1.5 : 1))] : null, hp: Math.ceil(p.hp), mhp: p.maxhp, money: Math.floor(p.money), bank: Math.floor(p.bank),
     hunger: Math.ceil(p.hunger), ammo: p.ammo, gun: true, wp: p.weapon, own: [...p.weapons], carm: p.carModel, career: p.career,
     wanted: p.wantedUntil > now, stars: p.wantedUntil > now ? p.stars : 0, dead: p.dead,
     adm: p.admin, fast: p.fast, god: p.god, inf: p.inf,
@@ -1494,7 +1495,7 @@ function tick() {
     const fl = (now - p.punchT < 220 ? 1 : 0) | (p.wantedUntil > now ? 2 : 0) | (now - p.hurtT < 200 ? 4 : 0) | (now < p.protectUntil ? 8 : 0) | (p.fishing ? 16 : 0) | (p.work ? 32 : 0) | (p.jailUntil > 0 ? 64 : 0);
     ps.push([p.id, Math.round(p.x), Math.round(p.y), Math.round(p.ang * 100), Math.ceil(p.hp), p.car, fl]);
   }
-  const cs = cars.filter(c => c.active).map(c => [c.id, Math.round(c.x), Math.round(c.y), Math.round(c.ang * 100), c.driver, c.color]);
+  const cs = cars.filter(c => c.active).map(c => [c.id, Math.round(c.x), Math.round(c.y), Math.round(c.ang * 100), c.driver, c.color, Math.round(c.speed)]);
   const ns = peds.filter(a => !a.dead).map(a => [a.id, Math.round(a.x), Math.round(a.y), a.hd, a.look]);
   const buf = frame(JSON.stringify({ t: 's', p: ps, c: cs, n: ns }));
   for (const c of conns) {
