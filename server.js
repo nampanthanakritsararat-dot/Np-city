@@ -15,7 +15,7 @@ const PORT = +process.env.PORT || 3000;
 const MAX_PLAYERS = 50;
 const TICK_MS = 50; // 20 ครั้ง/วินาที
 const CITY_NAME = 'Np-city RP';
-const VERSION = 'v3.7';
+const VERSION = 'v3.8';
 const DATA_FILE = path.join(__dirname, 'data.json');
 
 /* ------------------------------ บันทึกเงิน/อาชีพ ------------------------------ */
@@ -115,7 +115,10 @@ const CAR_MODELS = {
   sedan: { n: '🚙 ซีดาน',        price: 2500,  max: 470, acc: 570 },
   sport: { n: '🏎️ สปอร์ต',      price: 8000,  max: 580, acc: 690 },
   super: { n: '🚀 ซูเปอร์คาร์', price: 20000, max: 700, acc: 820 },
+  mustang: { n: '🐎 มัสแตง', price: 15000, max: 640, acc: 780 },
+  urus: { n: '🚙 อูรุส (SUV)', price: 32000, max: 680, acc: 820 },
 };
+const MODEL_IDX = ['hatch', 'sedan', 'sport', 'super', 'mustang', 'urus'];
 const HUNGER_SECS = 6;      // หิวลด 1 หน่วยทุกกี่วินาที
 
 /* ------------------------------ ร้านค้า / เมนู ------------------------------ */
@@ -195,9 +198,10 @@ const PLACES = {
   '4,9': 'cloth', '10,9': 'cloth',                        // ร้านเสื้อผ้า
   '6,3': 'school', '12,6': 'school',                      // โรงเรียน
   '9,3': 'jail',                                          // คุก
-  '8,3': 'police',                                        // สถานีตำรวจ (เดินเข้าลานได้)
+  '8,3': 'police',
+  '0,9': 'track', '1,9': 'track', '2,9': 'track', '0,10': 'track', '1,10': 'track', '2,10': 'track', '0,11': 'track', '1,11': 'track', '2,11': 'track',   // สนามแข่งรถ 3x3                                        // สถานีตำรวจ (เดินเข้าลานได้)
 };
-const KIND_IDX = { bld: 0, park: 1, shop: 2, job: 3, rest: 4, hosp: 5, bank: 6, gun: 7, dealer: 8, farm: 9, lake: 10, market: 11, cloth: 12, school: 13, jail: 14, police: 15 };
+const KIND_IDX = { bld: 0, park: 1, shop: 2, job: 3, rest: 4, hosp: 5, bank: 6, gun: 7, dealer: 8, farm: 9, lake: 10, market: 11, cloth: 12, school: 13, jail: 14, police: 15, track: 16 };
 const blocks = [];
 for (let i = 0; i < N; i++) {
   for (let j = 0; j < N; j++) {
@@ -209,7 +213,7 @@ for (let i = 0; i < N; i++) {
     });
   }
 }
-const solid = blocks.filter(b => b.k !== 'park' && b.k !== 'farm' && b.k !== 'police');
+const solid = blocks.filter(b => b.k !== 'park' && b.k !== 'farm' && b.k !== 'police' && b.k !== 'track');
 // สถานีตำรวจ: เดินเข้าลานด้านหน้าได้ ส่วนตัวอาคารด้านหลังเป็นของแข็ง
 for (const b of blocks) if (b.k === 'police') solid.push({ x: b.x + b.w * 0.15, y: b.y + b.h * 0.06, w: b.w * 0.7, h: b.h * 0.34, k: 'bld' });
 const byKind = {};
@@ -753,6 +757,9 @@ function onMessage(c, str) {
       p.in.th = num(m.th, -1, 1); p.in.st = num(m.st, -1, 1);
       if (typeof m.ang === 'number' && isFinite(m.ang)) p.ang = clamp(m.ang, -7, 7);
       break;
+    case 'jump':
+      if (!p.car && !p.dead && !(p.jailUntil > 0) && !p.jz) { p.jv = 330; p.jz = 0.1; }
+      break;
     case 'p':
       if (typeof m.ang === 'number' && isFinite(m.ang)) p.ang = clamp(m.ang, -7, 7);
       punch(p, now); break;
@@ -837,7 +844,7 @@ function placeCar(p, at) {
   const car = cars[p.carSlot - 1], def = CAR_MODELS[p.carModel];
   if (!car || !def) return;
   const sp = at && at.w === undefined && at.x !== undefined ? { x: at.x, y: at.y } : dealerSpot(car, at);
-  Object.assign(car, { active: true, owner: p.id, x: sp.x, y: sp.y, ang: 0, speed: 0, driver: 0, idle: 0, color: p.carColor, max: def.max, acc: def.acc });
+  Object.assign(car, { active: true, owner: p.id, x: sp.x, y: sp.y, ang: 0, speed: 0, driver: 0, idle: 0, color: p.carColor, max: def.max, acc: def.acc, model: p.carModel });
 }
 function nearBlk(p, list, range) {
   for (const b of list) {
@@ -1357,6 +1364,7 @@ function updatePlayer(p, dt, now) {
   }
   const jailed = p.jailUntil > 0;
   let moving = false;
+  if (p.jz > 0) { p.jv -= 900 * dt; p.jz += p.jv * dt; if (p.jz <= 0) { p.jz = 0; p.jv = 0; } }
   if (p.car) {
     const car = cars[p.car - 1];
     p.x = car.x; p.y = car.y; p.ang = car.ang;
@@ -1493,9 +1501,9 @@ function tick() {
   const ps = [];
   for (const p of players.values()) {
     const fl = (now - p.punchT < 220 ? 1 : 0) | (p.wantedUntil > now ? 2 : 0) | (now - p.hurtT < 200 ? 4 : 0) | (now < p.protectUntil ? 8 : 0) | (p.fishing ? 16 : 0) | (p.work ? 32 : 0) | (p.jailUntil > 0 ? 64 : 0);
-    ps.push([p.id, Math.round(p.x), Math.round(p.y), Math.round(p.ang * 100), Math.ceil(p.hp), p.car, fl]);
+    ps.push([p.id, Math.round(p.x), Math.round(p.y), Math.round(p.ang * 100), Math.ceil(p.hp), p.car, fl, Math.round(p.jz || 0)]);
   }
-  const cs = cars.filter(c => c.active).map(c => [c.id, Math.round(c.x), Math.round(c.y), Math.round(c.ang * 100), c.driver, c.color, Math.round(c.speed)]);
+  const cs = cars.filter(c => c.active).map(c => [c.id, Math.round(c.x), Math.round(c.y), Math.round(c.ang * 100), c.driver, c.color, Math.round(c.speed), Math.max(0, MODEL_IDX.indexOf(c.model || 'sedan'))]);
   const ns = peds.filter(a => !a.dead).map(a => [a.id, Math.round(a.x), Math.round(a.y), a.hd, a.look]);
   const buf = frame(JSON.stringify({ t: 's', p: ps, c: cs, n: ns }));
   for (const c of conns) {
